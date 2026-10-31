@@ -321,7 +321,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 22 h 15";
+const APP_VERSION = "31 oct. 2026 · 22 h 20";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -1218,16 +1218,33 @@ function renderAsset() {
 
   const big = $("#big"), chg = $("#chg");
   const goodSign = a.kind === "dette" ? -1 : 1;
-  const chgLine = (x, y, when) => {
+  // pour une position cotée : performance réelle, sans compter l'argent ajouté ou retiré sur la période
+  const flows = (d0, d1) => {
+    let f = 0; const c = assetCur(a);
+    for (const t of a.txs) if (t.date > d0 && t.date <= d1) {
+      const fx = fxAt(c, t.date) ?? 1, amt = t.qty * t.price * fx;
+      f += t.t === "sell" ? -(amt - (+t.fees || 0)) : amt + (+t.fees || 0);
+    }
+    return f;
+  };
+  const chgLine = (x, y, when, d0, d1) => {
+    if (isQ && !showPx && d0 && d1) {
+      // capital présent au début de la période : la valeur détenue au matin du premier jour
+      const start = d0 <= (firstDate(a) || d0) ? 0 : x, f = flows(start ? d0 : "0000", d1);
+      const dv = y - start - f, base = start + Math.max(0, f);
+      const c = cls(dv);
+      return `<span class="${c}">${signed(dv)}</span>${base > 0 ? `<span class="pill ${c}">${pct(dv / base * 100)}</span>` : ""}<span class="when">${esc(when)}${f ? " · hors versements" : ""}</span>`;
+    }
     if (a.kind !== "dette") return changeLine(x, y, when);
     const dv = y - x; return `<span class="${cls(-dv)}">${dv <= 0 ? "−" : "+"}${EUR.format(Math.abs(dv))}</span><span class="when">${esc(when)}</span>`;
   };
-  chg.innerHTML = chgLine(firstV, lastV, RANGE_WHEN[UI.range]);
+  const d0 = dates[k0], dN = dates[dates.length - 1];
+  chg.innerHTML = chgLine(firstV, lastV, RANGE_WHEN[UI.range], d0, dN);
   drawChart($("#chart"), dates, vals, {
     empty: isQ && !a.txs.length ? "Ajoute un premier achat pour voir l'évolution." : undefined,
     onHover: (i, ds, vs) => {
-      if (i == null) { big.textContent = eur(lastV); chg.innerHTML = chgLine(firstV, lastV, RANGE_WHEN[UI.range]); }
-      else { big.textContent = eur(vs[i]); chg.innerHTML = chgLine(vs[0], vs[i], "du " + fmtDateShort(ds[0]) + " au " + fmtDate(ds[i])); }
+      if (i == null) { big.textContent = eur(lastV); chg.innerHTML = chgLine(firstV, lastV, RANGE_WHEN[UI.range], d0, dN); }
+      else { big.textContent = eur(vs[i]); chg.innerHTML = chgLine(vs[0], vs[i], "du " + fmtDateShort(ds[0]) + " au " + fmtDate(ds[i]), ds[0], ds[i]); }
     },
   });
   bindRanges(renderAsset);
