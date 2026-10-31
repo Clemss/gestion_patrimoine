@@ -326,7 +326,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 22 h 30";
+const APP_VERSION = "31 oct. 2026 · 22 h 35";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -1049,7 +1049,7 @@ function rowHtml(a, C, p) {
   }
   return `<button type="button" class="row" data-id="${a.id}">
     <div style="min-width:0"><div class="name">${esc(a.name)}${a.demo ? `<span class="tag">exemple</span>` : ""}</div><div class="meta">${meta}</div></div>
-    <div class="spark">${spark(r.val.slice(from).map(Math.abs))}</div>
+    <div class="spark" title="${a.kind === "cote" ? "Cours sur 3 mois" : "Valeur sur 3 mois"}">${spark(a.kind === "cote" && r.px ? r.px.slice(from).map(x => x ?? 0) : r.val.slice(from).map(Math.abs))}</div>
     <div class="valbox"><div class="val">${eur(v)}</div>${a.kind === "cote" ? `<div class="qty">${num(p.qty, 6)} part${p.qty > 1 ? "s" : ""}</div>` : ""}</div>
     <div class="delta">${delta}</div>
   </button>`;
