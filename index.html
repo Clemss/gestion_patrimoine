@@ -653,11 +653,13 @@ function addMonths(s, m) {
   return d.toISOString().slice(0, 10);
 }
 function loanPayment(L) {
-  const r = (+L.rate || 0) / 1200, n = +L.months || 1;
+  // mensualité hors assurance une fois le différé terminé
+  const r = (+L.rate || 0) / 1200, n = Math.max(1, (+L.months || 1) - (+L.deferral || 0));
   return r ? L.amount * r / (1 - Math.pow(1 + r, -n)) : L.amount / n;
 }
 const LOAN_CACHE = new Map();
-// Tableau d'amortissement : celui de la banque s'il a été saisi (L.rows), sinon calculé (mensualités constantes)
+// Tableau d'amortissement : celui de la banque s'il a été saisi (L.rows), sinon calculé
+// (différé éventuel où l'on ne paie que les intérêts, puis mensualités constantes)
 function loanRows(L) {
   const key = JSON.stringify(L);
   if (LOAN_CACHE.has(key)) return LOAN_CACHE.get(key);
@@ -665,12 +667,12 @@ function loanRows(L) {
   if (Array.isArray(L.rows) && L.rows.length) {
     rows = [...L.rows].sort((x, y) => x.date < y.date ? -1 : 1).map(r => ({ insurance: +L.insurance || 0, ...r }));
   } else {
-    const r = (+L.rate || 0) / 1200, M = loanPayment(L);
+    const r = (+L.rate || 0) / 1200, M = loanPayment(L), def = Math.min(+L.deferral || 0, (+L.months || 0) - 1);
     let rem = +L.amount; rows = [];
     for (let k = 0; k < (+L.months || 0) && rem > 0.005; k++) {
-      const interest = rem * r, principal = Math.min(rem, M - interest);
+      const interest = rem * r, principal = k < def ? 0 : Math.min(rem, M - interest);
       rem -= principal;
-      rows.push({ date: addMonths(L.start, k), payment: principal + interest, interest, principal, insurance: +L.insurance || 0, remaining: Math.max(0, rem) });
+      rows.push({ date: addMonths(L.start, k), payment: principal + interest, interest, principal, insurance: +L.insurance || 0, remaining: Math.max(0, rem), deferred: k < def });
     }
   }
   LOAN_CACHE.set(key, rows);
@@ -684,6 +686,11 @@ function loanRemainingAt(L, date) {
   while (lo <= hi) { const m = (lo + hi) >> 1; if (rows[m].date <= date) { ans = m; lo = m + 1; } else hi = m - 1; }
   return ans < 0 ? +L.amount : rows[ans].remaining;
 }
+// mensualité du mois en cours (ou la prochaine), assurance comprise ; 0 une fois le crédit terminé
+function loanMonthly(L, date = today()) {
+  const r = loanRows(L).find(x => x.date.slice(0, 7) >= date.slice(0, 7));
+  return r ? (r.payment ?? loanPayment(L)) + (r.insurance || 0) : 0;
+}
 function loanPaidUntil(L, date) {
   let pay = 0, interest = 0, insurance = 0, principal = 0, n = 0;
   for (const r of loanRows(L)) {
@@ -692,21 +699,28 @@ function loanPaidUntil(L, date) {
   }
   return { pay, interest, insurance, principal, n };
 }
-function linkedCredit(bien) { return S.assets.find(x => x.kind === "dette" && x.loan && x.linkedTo === bien.id); }
+function linkedCredits(bien) { return S.assets.filter(x => x.kind === "dette" && x.loan && x.linkedTo === bien.id); }
 function linkedBien(credit) { return credit.linkedTo ? S.assets.find(x => x.id === credit.linkedTo) : null; }
-function saleSim(bien, credit, price, date, agencyPct) {
-  const L = credit?.loan;
-  const crd = L ? loanRemainingAt(L, date) : 0;
-  // indemnités de remboursement anticipé : plafond légal = min(6 mois d'intérêts, 3 % du capital restant dû)
-  const ira = L && crd > 0 ? Math.min(0.03 * crd, crd * (+L.rate || 0) / 1200 * 6) : 0;
+function saleSim(bien, credits, price, date, agencyPct) {
+  let crd = 0, ira = 0, borrowed = 0;
+  const paid = { pay: 0, interest: 0, insurance: 0, principal: 0, n: 0 };
+  const per = [];
+  for (const c of credits) {
+    const L = c.loan, cr = loanRemainingAt(L, date);
+    // indemnités de remboursement anticipé : plafond légal = min(6 mois d'intérêts, 3 % du capital restant dû)
+    const ir = cr > 0 ? Math.min(0.03 * cr, cr * (+L.rate || 0) / 1200 * 6) : 0;
+    crd += cr; ira += ir; borrowed += +L.amount;
+    const pd = loanPaidUntil(L, date);
+    for (const k in paid) paid[k] += pd[k];
+    per.push({ name: c.name, crd: cr, ira: ir });
+  }
   const agency = price * (agencyPct || 0) / 100;
   const net = price - agency - crd - ira;
   const p = bien.purchase || {};
   const cost = (+p.price || 0) + (+p.fees || 0);
-  const apport = Math.max(0, cost - (L ? +L.amount : 0));
-  const paid = L ? loanPaidUntil(L, date) : { pay: 0, interest: 0, insurance: 0, principal: 0, n: 0 };
+  const apport = Math.max(0, cost - borrowed);
   const spent = apport + paid.pay + paid.insurance;
-  return { crd, ira, agency, net, apport, paid, spent, gain: net - spent, plusValue: price - agency - cost };
+  return { crd, ira, agency, net, apport, paid, spent, per, gain: net - spent, plusValue: price - agency - cost };
 }
 function positionStats(a) {
   // Coût moyen pondéré, en euros (au taux de change du jour de la transaction)
@@ -906,7 +920,7 @@ function rowHtml(a, C, p) {
     delta = p.cost > 0 ? `<span class="pill ${cls(p.latent)}">${pct(p.latent / p.cost * 100)}</span>` : `<span class="flat">—</span>`;
   } else if (a.kind === "dette" && a.loan) {
     const rows = loanRows(a.loan), end = rows[rows.length - 1]?.date;
-    meta = `${eur(loanPayment(a.loan) + (+a.loan.insurance || 0))}/mois${end ? " · fin " + end.slice(0, 4) : ""}`;
+    meta = `${eur(loanMonthly(a.loan))}/mois${end ? " · fin " + end.slice(0, 4) : ""}`;
     const crd = -v, rp = a.loan.amount ? (a.loan.amount - crd) / a.loan.amount * 100 : 0;
     delta = `<span class="pill up">${num(rp, 1)} % remb.</span>`;
   } else if (a.kind === "bien" && a.purchase && a.purchase.price) {
@@ -942,12 +956,12 @@ function loanSections(a) {
   const bien = linkedBien(a);
   const repaidPct = L.amount ? (L.amount - crd) / L.amount * 100 : 0;
   const stats = `<section class="stats six">
-    <div class="stat"><div class="k">Mensualité</div><div class="v">${eur(M + ins)}</div><div class="s flat">${ins ? "dont assurance " + eur(ins) : "hors assurance"}</div></div>
+    <div class="stat"><div class="k">Mensualité ce mois-ci</div><div class="v">${eur(loanMonthly(L))}</div><div class="s flat">${L.deferral && rows[L.deferral] && rows[L.deferral].date > t ? "différé jusqu'en " + fmtMonth(rows[L.deferral - 1].date) + ", puis " + eur(loanPayment(L) + ins) : ins ? "dont assurance " + eur(ins) : "hors assurance"}</div></div>
     <div class="stat"><div class="k">Capital restant dû</div><div class="v">${eur(crd)}</div><div class="s flat">${num(repaidPct, 1)} % remboursé</div></div>
     <div class="stat"><div class="k">Capital remboursé</div><div class="v">${eur(L.amount - crd)}</div><div class="s flat">${paid.n} échéance${paid.n > 1 ? "s" : ""} sur ${rows.length}</div></div>
     <div class="stat"><div class="k">Intérêts payés à ce jour</div><div class="v">${eur(paid.interest)}</div><div class="s flat">${paid.insurance ? "+ " + eur(paid.insurance) + " d'assurance" : ""}</div></div>
     <div class="stat"><div class="k">Coût total du crédit</div><div class="v">${eur(totInt + totIns)}</div><div class="s flat">intérêts ${eur(totInt)}${totIns ? " + assurance" : ""}</div></div>
-    <div class="stat"><div class="k">Fin du crédit</div><div class="v">${end ? fmtMonth(end) : "—"}</div><div class="s flat">${L.rows?.length ? "tableau de la banque" : num(+L.rate, 3) + " % sur " + num(L.months / 12, 1) + " ans"}</div></div>
+    <div class="stat"><div class="k">Fin du crédit</div><div class="v">${end ? fmtMonth(end) : "—"}</div><div class="s flat">${L.rows?.length ? "tableau de la banque" : num(+L.rate, 3) + " % sur " + num(L.months / 12, 1) + " ans" + (L.deferral ? ", différé " + L.deferral + " mois" : "")}</div></div>
   </section>`;
   const byYear = new Map();
   for (const r of rows) {
@@ -972,20 +986,28 @@ function loanSections(a) {
   </section>`;
   return [stats, body];
 }
-function immoSections(a, credit) {
+function immoSections(a, credits) {
   const C = compute(), n = C.dates.length, p = a.purchase || {};
   const value = C.per[a.id].val[n - 1];
-  const crd = credit ? -C.per[credit.id].val[n - 1] : 0;
+  const crd = credits.reduce((s, c) => s - C.per[c.id].val[n - 1], 0);
   const cost = (+p.price || 0) + (+p.fees || 0);
   const pv = value - cost;
-  const M = credit ? loanPayment(credit.loan) + (+credit.loan.insurance || 0) : 0;
+  const M = credits.reduce((s, c) => s + loanMonthly(c.loan), 0);
   const stats = `<section class="stats six">
     <div class="stat"><div class="k">Valeur estimée</div><div class="v">${eur(value)}</div><div class="s flat">${a.growth ? (a.growth > 0 ? "+" : "") + num(+a.growth, 2) + " %/an après la dernière estimation" : "selon tes estimations"}</div></div>
     <div class="stat"><div class="k">Coût d'achat</div><div class="v">${cost ? eur(cost) : "—"}</div><div class="s flat">${p.price ? eur(+p.price) + (p.fees ? " + " + eur(+p.fees) + " de frais" : "") : "à renseigner dans Modifier"}</div></div>
     <div class="stat"><div class="k">Plus-value latente</div><div class="v ${cost ? cls(pv) : "flat"}">${cost ? signed(pv) : "—"}</div><div class="s ${cls(pv)}">${cost ? pct(pv / cost * 100) : ""}</div></div>
-    <div class="stat"><div class="k">Capital restant dû</div><div class="v">${credit ? eur(crd) : "—"}</div><div class="s flat">${credit ? `<button type="button" class="btn ghost" data-open="${credit.id}" style="padding:0 4px;margin-left:-4px;font-size:12.5px">voir le crédit →</button>` : "pas de crédit lié"}</div></div>
-    <div class="stat"><div class="k">Ta part nette</div><div class="v ${cls(value - crd)}">${eur(value - crd)}</div><div class="s flat">valeur − crédit</div></div>
-    <div class="stat"><div class="k">Mensualité</div><div class="v">${credit ? eur(M) : "—"}</div><div class="s flat">${credit && credit.loan.insurance ? "assurance comprise" : ""}</div></div>
+    <div class="stat"><div class="k">Capital restant dû</div><div class="v">${credits.length ? eur(crd) : "—"}</div><div class="s flat">${credits.length ? credits.length + " crédit" + (credits.length > 1 ? "s" : "") : "pas de crédit lié"}</div></div>
+    <div class="stat"><div class="k">Ta part nette</div><div class="v ${cls(value - crd)}">${eur(value - crd)}</div><div class="s flat">valeur − crédits</div></div>
+    <div class="stat"><div class="k">Mensualités ce mois-ci</div><div class="v">${credits.length ? eur(M) : "—"}</div><div class="s flat">${credits.length ? "assurance comprise" : ""}</div></div>
+  </section>`;
+  const loansHtml = `<section><div class="sec-head"><h2>Crédits</h2><button class="btn" type="button" id="add-loan">Ajouter un crédit</button></div>
+    ${credits.length ? `<div class="list">${credits.map(c => {
+      const L = c.loan, rows = loanRows(L), end = rows.at(-1)?.date, cr = -C.per[c.id].val[n - 1];
+      return `<button type="button" class="row" data-open="${c.id}" style="grid-template-columns:minmax(0,1fr) auto">
+        <div style="min-width:0"><div class="name">${esc(c.name)}</div><div class="meta" style="white-space:normal">${eur(+L.amount)} à ${num(+L.rate, 3)} % · ${eur(loanMonthly(L))}/mois${L.deferral ? " · différé " + L.deferral + " mois" : ""}${end ? " · fin " + end.slice(0, 4) : ""}</div></div>
+        <div class="valbox"><div class="val">${eur(cr)}</div><div class="qty">restant dû</div></div></button>`;
+    }).join("")}</div>` : `<p class="empty">Aucun crédit lié à ce bien.</p>`}
   </section>`;
   const def = Math.round(value / 1000) * 1000 || Math.round(+p.price || 0);
   const sim = `<section><div class="sec-head"><h2>Et si je vends ?</h2></div>
@@ -997,26 +1019,26 @@ function immoSections(a, credit) {
       </div>
       <div id="sim-out"></div>
     </div></section>`;
-  return [stats, sim];
+  return [stats, loansHtml + sim];
 }
-function bindSim(a, credit) {
+function bindSim(a, credits) {
   const out = $("#sim-out"), P = $("#sim-price"), D = $("#sim-date"), F = $("#sim-agency");
   const line = (label, v, opts = {}) => `<tr${opts.total ? ' style="font-weight:700;border-top:2px solid var(--line)"' : ""}><td style="white-space:normal">${label}${opts.sub ? `<div class="hint" style="font-weight:400">${opts.sub}</div>` : ""}</td><td class="num ${opts.cls || ""}">${v}</td></tr>`;
   const run = () => {
     const price = parseFloat(P.value) || 0, date = D.value || today(), ag = parseFloat(F.value) || 0;
-    const s = saleSim(a, credit, price, date, ag);
-    const hasCost = !!(a.purchase && a.purchase.price);
+    const s = saleSim(a, credits, price, date, ag);
+    const hasCost = !!(a.purchase && a.purchase.price), many = credits.length > 1;
     out.innerHTML = `
       <div class="tbl" style="margin-top:4px"><table><tbody>
         ${line("Prix de vente", eur(price))}
         ${ag ? line(`Frais d'agence (${num(ag, 2)} %)`, "− " + eur(s.agency)) : ""}
-        ${credit ? line(`Capital restant dû au ${fmtDate(date)}`, "− " + eur(s.crd), { sub: "remboursé à la banque le jour de la vente" }) : ""}
-        ${credit && s.ira ? line("Indemnités de remboursement anticipé", "− " + eur(s.ira), { sub: "maximum légal : 6 mois d'intérêts, plafonné à 3 % du capital. Souvent négociable, parfois exclu dans ton contrat." }) : ""}
+        ${credits.length ? line(`Capital restant dû au ${fmtDate(date)}`, "− " + eur(s.crd), { sub: (many ? s.per.map(x => esc(x.name) + " : " + eur(x.crd)).join(" · ") + ". " : "") + "Remboursé à la banque le jour de la vente." }) : ""}
+        ${s.ira ? line("Indemnités de remboursement anticipé", "− " + eur(s.ira), { sub: "maximum légal : 6 mois d'intérêts, plafonné à 3 % du capital. Souvent négociable, parfois exclu dans ton contrat." }) : ""}
         ${line("Ce qui te reste en poche", eur(s.net), { total: true, cls: cls(s.net) })}
       </tbody></table></div>
       ${hasCost ? `<div class="tbl" style="margin-top:10px"><table><tbody>
-        ${line("Ton apport à l'achat", eur(s.apport), { sub: credit ? "prix + frais − montant emprunté" : "prix + frais" })}
-        ${credit ? line(`Mensualités payées d'ici là (${s.paid.n})`, eur(s.paid.pay + s.paid.insurance), { sub: `dont ${eur(s.paid.principal)} de capital, ${eur(s.paid.interest)} d'intérêts${s.paid.insurance ? " et " + eur(s.paid.insurance) + " d'assurance" : ""}` }) : ""}
+        ${line("Ton apport à l'achat", eur(s.apport), { sub: credits.length ? "prix + frais − montants empruntés" : "prix + frais" })}
+        ${credits.length ? line(`Mensualités payées d'ici là`, eur(s.paid.pay + s.paid.insurance), { sub: `dont ${eur(s.paid.principal)} de capital, ${eur(s.paid.interest)} d'intérêts${s.paid.insurance ? " et " + eur(s.paid.insurance) + " d'assurance" : ""}` }) : ""}
         ${line("Total sorti de ta poche", eur(s.spent))}
         ${line("Gain réel de l'opération", signed(s.gain), { total: true, cls: cls(s.gain), sub: "ce qui te reste − tout ce que tu as payé. Sans compter le loyer que tu aurais payé en location." })}
       </tbody></table></div>` : `<p class="hint">Renseigne le prix d'achat dans « Modifier » pour voir ton gain réel.</p>`}
@@ -1034,17 +1056,17 @@ function renderAsset() {
   const i0 = Math.max(0, daysBetween(C.start, rangeStart(UI.range, firstDate(a) || C.start)));
   const isQ = a.kind === "cote";
   const showPx = isQ && UI.mode === "px";
-  const credit = a.kind === "bien" ? linkedCredit(a) : null;
-  const isImmo = a.kind === "bien" && (a.purchase || credit);
-  const showEq = !!credit && UI.mode === "eq";
-  const series = showPx ? r.px : showEq ? Array.from(r.val).map((x, i) => x + C.per[credit.id].val[i]) : Array.from(r.val).map(x => a.kind === "dette" ? -x : x);
+  const credits = a.kind === "bien" ? linkedCredits(a) : [];
+  const isImmo = a.kind === "bien" && (a.purchase || credits.length || a.category === "Immobilier");
+  const showEq = credits.length > 0 && UI.mode === "eq";
+  const series = showPx ? r.px : showEq ? Array.from(r.val).map((x, i) => credits.reduce((s, c) => s + C.per[c.id].val[i], x)) : Array.from(r.val).map(x => a.kind === "dette" ? -x : x);
   const dates = C.dates.slice(i0), vals = series.slice(i0);
   const cur = isQ ? assetCur(a) : "EUR";
   const p = isQ ? positionStats(a) : null;
   const lastV = vals[vals.length - 1] ?? 0;
   let k0 = 0; while (k0 < vals.length && vals[k0] == null) k0++;
   const firstV = vals[k0] ?? 0;
-  const label = showPx ? "Cours en euros" : showEq ? "Ta part nette (valeur − crédit)" : a.kind === "dette" ? (a.loan ? "Capital restant dû" : "Reste à rembourser") : isQ ? "Valeur détenue" : "Valeur estimée";
+  const label = showPx ? "Cours en euros" : showEq ? "Ta part nette (valeur − crédits)" : a.kind === "dette" ? (a.loan ? "Capital restant dû" : "Reste à rembourser") : isQ ? "Valeur détenue" : "Valeur estimée";
   const app = $("#app");
 
   let statsHtml = "", bodyHtml = "";
@@ -1097,7 +1119,7 @@ function renderAsset() {
       ${vs.length ? `<div class="tbl" style="margin-top:12px"><table><thead><tr><th>Date</th><th class="num">${a.kind === "dette" ? "Reste dû" : "Valeur"}</th><th></th></tr></thead>
         <tbody>${vs.map(v => `<tr><td>${fmtDate(v.date)}</td><td class="num">${eur(v.value)}</td><td class="num"><button type="button" class="del" data-del="${v.id}" aria-label="Supprimer l'estimation">Supprimer</button></td></tr>`).join("")}</tbody></table></div>` : ""}
     </section>`;
-    if (isImmo) { const [st, sim] = immoSections(a, credit); statsHtml = st; bodyHtml = sim + bodyHtml; }
+    if (isImmo) { const [st, sim] = immoSections(a, credits); statsHtml = st; bodyHtml = sim + bodyHtml; }
   }
 
   app.innerHTML = `
@@ -1108,7 +1130,7 @@ function renderAsset() {
       <div class="tools"><button class="btn" type="button" id="edit">Modifier</button></div>
     </div>
     <section class="hero">
-      <div class="eyebrow"><span id="lbl">${label}</span>${credit ? `<span class="seg" role="group" aria-label="Affichage"><button type="button" data-mode="val" aria-pressed="${!showEq}">Valeur du bien</button><button type="button" data-mode="eq" aria-pressed="${showEq}">Ma part nette</button></span>` : ""}${isQ ? `<span class="seg" role="group" aria-label="Affichage"><button type="button" data-mode="val" aria-pressed="${!showPx}">Ma position</button><button type="button" data-mode="px" aria-pressed="${showPx}">Cours</button></span>` : ""}</div>
+      <div class="eyebrow"><span id="lbl">${label}</span>${credits.length ? `<span class="seg" role="group" aria-label="Affichage"><button type="button" data-mode="val" aria-pressed="${!showEq}">Valeur du bien</button><button type="button" data-mode="eq" aria-pressed="${showEq}">Ma part nette</button></span>` : ""}${isQ ? `<span class="seg" role="group" aria-label="Affichage"><button type="button" data-mode="val" aria-pressed="${!showPx}">Ma position</button><button type="button" data-mode="px" aria-pressed="${showPx}">Cours</button></span>` : ""}</div>
       <div class="big" id="big">${eur(lastV)}</div>
       <div class="chg" id="chg"></div>
       ${rangeButtons()}
@@ -1159,7 +1181,7 @@ function renderAsset() {
     };
   } else if ($("#valform")) {
     const f = $("#valform");
-    if (isImmo) bindSim(a, credit);
+    if (isImmo) { bindSim(a, credits); $("#add-loan").onclick = () => openLoanDialog(a); }
     f.onsubmit = e => {
       e.preventDefault();
       const date = $("#v-date", f).value, value = parseFloat($("#v-value", f).value);
@@ -1219,29 +1241,62 @@ dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
 const closeBtn = `<button class="icon-btn" type="button" data-close aria-label="Fermer"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>`;
 
 /* Champs partagés : crédit et achat immobilier */
-function loanFieldsHtml(L = {}) {
+function loanFieldsHtml(L = {}, pfx = "ln", name = null) {
   return `<div class="fields">
-    <label class="f">Montant emprunté (€)<input type="number" id="ln-amount" step="any" min="0" inputmode="decimal" value="${L.amount ?? ""}"></label>
-    <label class="f">Taux nominal (% par an)<input type="number" id="ln-rate" step="any" min="0" inputmode="decimal" value="${L.rate ?? ""}" placeholder="ex. 3,45"></label>
-    <label class="f">Durée (années)<input type="number" id="ln-years" step="any" min="1" max="40" inputmode="decimal" value="${L.months ? +(L.months / 12).toFixed(2) : ""}" placeholder="ex. 25"></label>
-    <label class="f">1re mensualité le<input type="date" id="ln-start" value="${L.start || ""}"></label>
-    <label class="f">Assurance (€ par mois)<input type="number" id="ln-ins" step="any" min="0" inputmode="decimal" value="${L.insurance ?? ""}" placeholder="0"></label>
-  </div><span class="hint" id="ln-hint">Ces chiffres sont sur ton offre de prêt ou ton tableau d'amortissement.</span>`;
+    ${name != null ? `<label class="f">Nom du prêt<input type="text" id="${pfx}-name" value="${esc(name)}" placeholder="ex. Prêt principal, PTZ"></label>` : ""}
+    <label class="f">Montant emprunté (€)<input type="number" id="${pfx}-amount" step="any" min="0" inputmode="decimal" value="${L.amount ?? ""}"></label>
+    <label class="f">Taux nominal (% par an)<input type="number" id="${pfx}-rate" step="any" min="0" inputmode="decimal" value="${L.rate ?? ""}" placeholder="ex. 3,45 (0 pour un PTZ)"></label>
+    <label class="f">Durée totale (années)<input type="number" id="${pfx}-years" step="any" min="1" max="40" inputmode="decimal" value="${L.months ? +(L.months / 12).toFixed(2) : ""}" placeholder="ex. 25"></label>
+    <label class="f">1re mensualité le<input type="date" id="${pfx}-start" value="${L.start || ""}"></label>
+    <label class="f">Différé (mois)<input type="number" id="${pfx}-def" step="1" min="0" inputmode="numeric" value="${L.deferral || ""}" placeholder="0 si aucun"></label>
+    <label class="f">Assurance (€ par mois)<input type="number" id="${pfx}-ins" step="any" min="0" inputmode="decimal" value="${L.insurance ?? ""}" placeholder="0"></label>
+  </div><span class="hint" id="${pfx}-hint">Ces chiffres sont sur ton offre de prêt ou ton tableau d'amortissement. Différé : nombre de mois au début pendant lesquels tu ne rembourses pas de capital (fréquent pour un PTZ).</span>`;
 }
-function readLoan(d) {
-  const amount = parseFloat($("#ln-amount", d).value), rate = parseFloat($("#ln-rate", d).value) || 0;
-  const months = Math.round((parseFloat($("#ln-years", d).value) || 0) * 12), start = $("#ln-start", d).value, insurance = parseFloat($("#ln-ins", d).value) || 0;
-  return amount > 0 && months > 0 && start ? { amount, rate, months, start, insurance } : null;
+function readLoan(d, pfx = "ln") {
+  const v = id => $(`#${pfx}-${id}`, d)?.value;
+  const amount = parseFloat(v("amount")), rate = parseFloat(v("rate")) || 0;
+  const months = Math.round((parseFloat(v("years")) || 0) * 12), start = v("start"), insurance = parseFloat(v("ins")) || 0;
+  const deferral = Math.max(0, Math.round(parseFloat(v("def")) || 0));
+  if (!(amount > 0 && months > 0 && start)) return null;
+  const L = { amount, rate, months, start, insurance };
+  if (deferral) L.deferral = Math.min(deferral, months - 1);
+  return L;
 }
-function bindLoanPreview(d) {
-  const h = $("#ln-hint", d);
+function bindLoanPreview(d, pfx = "ln") {
+  const h = $(`#${pfx}-hint`, d);
   const run = () => {
-    const L = readLoan(d); if (!L) return;
-    const M = loanPayment(L), rows = loanRows(L), totInt = rows.reduce((s, r) => s + r.interest, 0);
-    h.className = "hint"; h.textContent = `Mensualité calculée : ${eur(M)} hors assurance${L.insurance ? ", " + eur(M + L.insurance) + " avec" : ""} · intérêts totaux ${eur(totInt)} · fin ${fmtMonth(rows[rows.length - 1].date)}. Compare avec ton tableau d'amortissement.`;
+    const L = readLoan(d, pfx); if (!L) return;
+    const rows = loanRows(L), totInt = rows.reduce((s, r) => s + r.interest, 0);
+    const M = loanPayment(L);
+    h.className = "hint";
+    h.textContent = (L.deferral ? `Pendant le différé : ${eur(rows[0].payment + L.insurance)}/mois, puis ` : "Mensualité calculée : ") +
+      `${eur(M)} hors assurance${L.insurance ? " (" + eur(M + L.insurance) + " avec)" : ""} · intérêts totaux ${eur(totInt)} · fin ${fmtMonth(rows[rows.length - 1].date)}. Compare avec ton tableau d'amortissement.`;
   };
-  $$("#ln-amount, #ln-rate, #ln-years, #ln-start, #ln-ins", d).forEach(el => el.addEventListener("input", run));
+  ["amount", "rate", "years", "start", "def", "ins"].forEach(id => $(`#${pfx}-${id}`, d)?.addEventListener("input", run));
   run();
+}
+function openLoanDialog(bien) {
+  const others = linkedCredits(bien).length;
+  openDialog(`
+    <div class="dlg-head"><h2>Ajouter un crédit</h2>${closeBtn}</div>
+    <div class="dlg-body">
+      <form id="loanform" autocomplete="off" style="display:flex;flex-direction:column;gap:12px">
+        <p class="note">Lié à ${esc(bien.name)}. Le capital restant dû est calculé automatiquement et s'ajoute aux autres crédits du bien.</p>
+        ${loanFieldsHtml({ start: bien.purchase?.date ? addMonths(bien.purchase.date, 1) : "" }, "ln", others ? "PTZ" : "Prêt principal")}
+        <span class="hint err" id="lf-err"></span>
+        <div class="form-actions"><button class="btn" type="button" data-close>Annuler</button><button class="btn primary" type="submit">Ajouter</button></div>
+      </form>
+    </div>`, d => {
+    bindLoanPreview(d);
+    $("#loanform", d).onsubmit = e => {
+      e.preventDefault();
+      const L = readLoan(d);
+      if (!L) { $("#lf-err", d).textContent = "Complète le montant, la durée et la date de 1re mensualité."; return; }
+      const nm = $("#ln-name", d).value.trim() || "Crédit";
+      S.assets.push({ id: uid(), kind: "dette", name: nm, category: "Crédit immobilier", linkedTo: bien.id, loan: { ...L, from: bien.purchase?.date || addMonths(L.start, -1) }, txs: [], vals: [] });
+      save(); dlg.close(); renderAsset(); toast("Crédit ajouté");
+    };
+  });
 }
 function purchaseFieldsHtml(p = {}, growth) {
   return `<div class="fields">
@@ -1374,7 +1429,11 @@ function openAddImmo() {
         <label class="f">Valeur estimée aujourd'hui (€)<input type="number" id="a-est" step="any" min="0" inputmode="decimal" placeholder="facultatif : sinon, le prix d'achat"></label>
         <hr class="divider">
         <label class="check"><input type="checkbox" id="a-hasloan" checked> Acheté avec un crédit</label>
-        <div id="loanbox" style="display:flex;flex-direction:column;gap:8px">${loanFieldsHtml()}</div>
+        <div id="loanbox" style="display:flex;flex-direction:column;gap:12px">
+          <div class="setting"><h3>Crédit 1</h3></div>${loanFieldsHtml({}, "ln", "Prêt principal")}
+          <div id="loan2" hidden style="display:flex;flex-direction:column;gap:8px"><hr class="divider"><div class="setting"><h3>Crédit 2</h3></div>${loanFieldsHtml({}, "ln2", "PTZ")}</div>
+          <button class="btn" type="button" id="add2" style="align-self:flex-start">Ajouter un 2e crédit</button>
+        </div>
         <span class="hint err" id="a-hint"></span>
         <div class="form-actions"><button class="btn" type="button" data-close>Annuler</button><button class="btn primary" type="submit">Ajouter</button></div>
       </form>
@@ -1383,8 +1442,10 @@ function openAddImmo() {
     const has = $("#a-hasloan", d), box = $("#loanbox", d);
     has.onchange = () => { box.hidden = !has.checked; };
     // date de 1re mensualité proposée : un mois après l'achat
-    $("#pu-date", d).addEventListener("change", e => { const s = $("#ln-start", d); if (!s.value && e.target.value) { s.value = addMonths(e.target.value, 1); s.dispatchEvent(new Event("input")); } });
-    bindLoanPreview(d);
+    $("#pu-date", d).addEventListener("change", e => { for (const id of ["#ln-start", "#ln2-start"]) { const s = $(id, d); if (!s.value && e.target.value) { s.value = addMonths(e.target.value, 1); s.dispatchEvent(new Event("input")); } } });
+    bindLoanPreview(d); bindLoanPreview(d, "ln2");
+    const l2 = $("#loan2", d), add2 = $("#add2", d);
+    add2.onclick = () => { l2.hidden = false; add2.hidden = true; };
     $("#addform", d).onsubmit = e => {
       e.preventDefault();
       const hint = $("#a-hint", d);
@@ -1394,12 +1455,16 @@ function openAddImmo() {
       if (!date || !(price > 0)) { hint.textContent = "Indique la date et le prix d'achat."; return; }
       const L = has.checked ? readLoan(d) : null;
       if (has.checked && !L) { hint.textContent = "Complète le crédit (montant, durée, date de 1re mensualité) ou décoche la case."; return; }
+      const L2 = has.checked && !l2.hidden ? readLoan(d, "ln2") : null;
+      if (has.checked && !l2.hidden && !L2) { hint.textContent = "Complète le 2e crédit, ou recharge le formulaire pour l'enlever."; return; }
       const bien = { id: uid(), kind: "bien", name, category: "Immobilier", interp: true, purchase: { date, price, fees }, txs: [],
         vals: [{ id: uid(), date, value: price }] };
       if (!isNaN(growth)) bien.growth = growth;
       if (est > 0 && today() > date) bien.vals.push({ id: uid(), date: today(), value: est });
       S.assets.push(bien);
-      if (L) S.assets.push({ id: uid(), kind: "dette", name: "Crédit · " + name, category: "Crédit immobilier", linkedTo: bien.id, loan: { ...L, from: date }, txs: [], vals: [] });
+      const mk = (L, pfx) => ({ id: uid(), kind: "dette", name: $(`#${pfx}-name`, d).value.trim() || "Crédit", category: "Crédit immobilier", linkedTo: bien.id, loan: { ...L, from: date }, txs: [], vals: [] });
+      if (L) S.assets.push(mk(L, "ln"));
+      if (L2) S.assets.push(mk(L2, "ln2"));
       save(); dlg.close(); openAsset(bien.id); toast("Ajouté");
     };
   });
@@ -1409,7 +1474,7 @@ function openEdit(a) {
   const isQ = a.kind === "cote";
   const isLoan = a.kind === "dette" && !!a.loan;
   const isImmoBien = a.kind === "bien" && a.category === "Immobilier";
-  const credit = a.kind === "bien" ? linkedCredit(a) : null;
+  const credits = a.kind === "bien" ? linkedCredits(a) : [];
   openDialog(`
     <div class="dlg-head"><h2>Modifier</h2>${closeBtn}</div>
     <div class="dlg-body">
@@ -1424,7 +1489,7 @@ function openEdit(a) {
         ${isLoan ? `<hr class="divider"><div class="setting"><h3>Crédit</h3></div>${loanFieldsHtml(a.loan)}` : ""}
         <span class="hint err" id="e-hint"></span>
         <div class="form-actions">
-          <button class="btn danger" type="button" id="e-del" style="margin-right:auto">${credit ? "Supprimer (avec son crédit)" : "Supprimer"}</button>
+          <button class="btn danger" type="button" id="e-del" style="margin-right:auto">${credits.length ? "Supprimer (avec ses crédits)" : "Supprimer"}</button>
           <button class="btn" type="button" data-close>Annuler</button><button class="btn primary" type="submit">Enregistrer</button>
         </div>
       </form>
@@ -1432,7 +1497,7 @@ function openEdit(a) {
     const del = $("#e-del", d);
     del.onclick = () => {
       if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Confirmer la suppression"; return; }
-      const gone = [a.id, ...(credit ? [credit.id] : [])];
+      const gone = [a.id, ...credits.map(c => c.id)];
       tomb(...gone); S.assets = S.assets.filter(x => !gone.includes(x.id)); save(); dlg.close(); UI.view = "home"; render(); toast("Élément supprimé");
     };
     $("#editform", d).onsubmit = e => {
@@ -1444,7 +1509,7 @@ function openEdit(a) {
       if (isLoan) {
         const L = readLoan(d);
         if (!L) { $("#e-hint", d).textContent = "Complète le montant, la durée et la date de 1re mensualité."; return; }
-        a.loan = { ...a.loan, ...L };
+        a.loan = { ...a.loan, ...L }; if (!L.deferral) delete a.loan.deferral;
       }
       if (isImmoBien) {
         const date = $("#pu-date", d).value, price = parseFloat($("#pu-price", d).value), fees = parseFloat($("#pu-fees", d).value) || 0, g = parseFloat($("#pu-growth", d).value);
