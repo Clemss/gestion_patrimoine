@@ -324,7 +324,7 @@ function load() {
   try { S = JSON.parse(localStorage.getItem(KEY)); } catch (e) { S = null; }
   try { P = JSON.parse(localStorage.getItem(PKEY)) || {}; } catch (e) { P = {}; }
   if (!S || !Array.isArray(S.assets)) S = demoState();
-  if (!S.workerUrl) S.workerUrl = DEFAULT_WORKER;
+  S.workerUrl = cleanUrl(S.workerUrl) || DEFAULT_WORKER;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast("Sauvegarde impossible sur cet appareil"); } CALC = null; }
 function saveP() { try { localStorage.setItem(PKEY, JSON.stringify(P)); } catch (e) { /* cache plein : on ignore */ } }
@@ -374,9 +374,16 @@ function demoState() {
 }
 
 /* ================= Relais de prix ================= */
+// accepte l'adresse avec ou sans /chart, /search, paramètres ou slash final
+function cleanUrl(u) {
+  let s = String(u || "").trim().replace(/[?#].*$/, "").replace(/\/+$/, "");
+  s = s.replace(/\/(chart|search)$/i, "");
+  if (s && !/^https?:\/\//i.test(s)) s = "https://" + s;
+  return s;
+}
 async function api(path) {
   if (!S.workerUrl) throw new Error("Relais de prix non configuré (Réglages)");
-  const base = S.workerUrl.trim().replace(/\/+$/, "");
+  const base = cleanUrl(S.workerUrl);
   let r;
   try { r = await fetch(base + path); } catch (e) { throw new Error("Relais injoignable : vérifie l'adresse dans les réglages"); }
   if (!r.ok) {
@@ -389,6 +396,7 @@ async function api(path) {
 async function fetchChart(symbol, from) {
   const j = await api(`/chart?symbol=${encodeURIComponent(symbol)}&from=${toUnix(from)}&to=${Math.floor(Date.now() / 1000) + 86400}`);
   const res = j?.chart?.result?.[0];
+  if (j && j.service) throw new Error("Adresse du relais incorrecte : vérifie-la dans les réglages");
   if (!res) throw new Error(j?.chart?.error?.description || "Symbole introuvable : " + symbol);
   const off = res.meta.gmtoffset || 0;
   let cur = res.meta.currency || "EUR", mult = 1;
@@ -1088,7 +1096,7 @@ function openSettings() {
       </div>
     </div>`, d => {
     const url = $("#s-url", d), hint = $("#s-hint", d);
-    $("#s-save", d).onclick = () => { S.workerUrl = url.value.trim().replace(/\/+$/, ""); save(); hint.className = "hint"; hint.textContent = "Adresse enregistrée."; refreshPrices(true); };
+    $("#s-save", d).onclick = () => { S.workerUrl = cleanUrl(url.value) || DEFAULT_WORKER; url.value = S.workerUrl; save(); hint.className = "hint"; hint.textContent = "Adresse enregistrée."; refreshPrices(true); };
     $("#s-test", d).onclick = async () => {
       const old = S.workerUrl; S.workerUrl = url.value.trim();
       hint.className = "hint"; hint.textContent = "Test en cours…";
