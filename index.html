@@ -318,6 +318,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
+const APP_VERSION = "31 oct. 2026 · 21 h 45";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -329,6 +330,15 @@ function load() {
   if (!S || !Array.isArray(S.assets)) S = demoState();
   S.workerUrl = cleanUrl(S.workerUrl) || DEFAULT_WORKER;
   S.rev = S.rev | 0; S.deleted = S.deleted || [];
+  relinkOrphans();
+}
+// un crédit immobilier qui ne pointe vers aucun bien est rattaché au bien immobilier s'il n'y en a qu'un
+function relinkOrphans() {
+  const homes = S.assets.filter(x => x.kind === "bien" && x.category === "Immobilier");
+  if (homes.length !== 1) return false;
+  let changed = false;
+  for (const c of S.assets) if (c.kind === "dette" && c.loan && (!c.linkedTo || !S.assets.some(y => y.id === c.linkedTo))) { c.linkedTo = homes[0].id; changed = true; }
+  return changed;
 }
 // enregistre sur l'appareil sans déclencher de synchronisation
 function persist() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast("Sauvegarde impossible sur cet appareil"); } CALC = null; }
@@ -1591,11 +1601,12 @@ function importAssets(list) {
     if (inc.id) idMap[inc.id] = same.id;
     // complète les réglages d'un bien ou d'un crédit déjà présent (achat, quote-part, crédit…)
     const orphan = x => !x.linkedTo || !S.assets.some(y => y.id === x.linkedTo);
-    for (const k of ["purchase", "share", "growth", "loan", "linkedTo", "interp"]) if (inc[k] !== undefined && (same[k] === undefined || (k === "loan" && JSON.stringify(same.loan) !== JSON.stringify(inc.loan)) || (k === "linkedTo" && same.linkedTo !== inc.linkedTo && orphan(same)))) { same[k] = inc[k]; added++; }
+    for (const k of ["purchase", "share", "growth", "loan", "linkedTo", "interp"]) if (inc[k] !== undefined && (same[k] === undefined || (k === "loan" && JSON.stringify(same.loan) !== JSON.stringify(inc.loan)) || (k === "linkedTo" && same.linkedTo !== inc.linkedTo && orphan(same)) || (["purchase", "share", "growth"].includes(k) && JSON.stringify(same[k]) !== JSON.stringify(inc[k])))) { same[k] = inc[k]; added++; }
     const have = new Set([...(same.txs || []), ...(same.vals || [])].map(key));
     for (const t of inc.txs || []) if (!have.has(key(t))) { same.txs.push({ fees: 0, ...t, id: uid() }); added++; }
     for (const v of inc.vals || []) if (!have.has(key(v))) { same.vals.push({ ...v, id: uid() }); added++; }
   }
+  if (relinkOrphans()) added++;
   return added;
 }
 
@@ -1635,6 +1646,7 @@ function openSettings() {
       <hr class="divider">
       <div class="setting">
         <h3>Données</h3>
+        <p>Version de l'appli : ${APP_VERSION}</p>
         <div class="row-btns">
           <button class="btn" type="button" id="s-refresh">Actualiser les cours</button>
           ${TOKEN ? "" : `<button class="btn" type="button" id="s-demo">Charger les exemples</button>`}
