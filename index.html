@@ -1,0 +1,1166 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Patrimoine</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Patrimoine">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101217" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600;700&display=swap">
+<style>
+/* Layout : une colonne de lecture (max 920px) — en-tête de valeur façon terminal boursier,
+   graphique pleine largeur, puis lignes d'actifs denses et alignées. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --sunken: #eef0f4;
+  --ink: #15181e;
+  --muted: #5b6270;
+  --faint: #8b92a0;
+  --line: #e1e4ea;
+  --accent: #3a3fae;
+  --accent-ink: #ffffff;
+  --up: #0d7a3c;
+  --up-soft: rgba(13,122,60,.10);
+  --down: #c2302c;
+  --down-soft: rgba(194,48,44,.10);
+  --shadow: 0 1px 2px rgba(20,24,40,.05), 0 8px 24px rgba(20,24,40,.06);
+  --f-display: "Bricolage Grotesque", "Figtree", system-ui, sans-serif;
+  --f-body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --r: 12px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101217; --surface: #171a21; --sunken: #1d2129; --ink: #e9ebf0; --muted: #a0a7b5; --faint: #6f7685;
+    --line: #2a2f39; --accent: #9296ff; --accent-ink: #11132a; --up: #3ccf7c; --up-soft: rgba(60,207,124,.13);
+    --down: #ff6f68; --down-soft: rgba(255,111,104,.13); --shadow: 0 1px 2px rgba(0,0,0,.3);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101217; --surface: #171a21; --sunken: #1d2129; --ink: #e9ebf0; --muted: #a0a7b5; --faint: #6f7685;
+  --line: #2a2f39; --accent: #9296ff; --accent-ink: #11132a; --up: #3ccf7c; --up-soft: rgba(60,207,124,.13);
+  --down: #ff6f68; --down-soft: rgba(255,111,104,.13); --shadow: 0 1px 2px rgba(0,0,0,.3);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+body {
+  background: var(--bg); color: var(--ink); font: 15px/1.5 var(--f-body);
+  font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
+}
+[hidden] { display: none !important; }
+button, input, select { font: inherit; color: inherit; }
+.wrap {
+  max-width: 920px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+/* Barre du haut */
+.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 30; background: var(--bg); }
+.top .wrap { display: flex; align-items: center; gap: 12px; padding-block: 10px; }
+.brand { font: 700 20px/1 var(--f-display); letter-spacing: -.01em; margin-right: auto; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.brand svg { color: var(--accent); }
+.status { font-size: 12.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.status.err { color: var(--down); }
+
+.btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 7px 14px;
+  font-weight: 600; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.btn:hover { border-color: var(--faint); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger { color: var(--down); }
+.btn.danger.armed { background: var(--down); color: #fff; border-color: var(--down); }
+.btn.ghost { background: transparent; border-color: transparent; }
+.btn.ghost:hover { background: var(--sunken); }
+.btn:disabled { opacity: .5; cursor: default; }
+.icon-btn { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; width: 36px; height: 36px; display: grid; place-items: center; cursor: pointer; flex: none; }
+.icon-btn:hover { border-color: var(--faint); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Bandeau exemple */
+.banner { background: var(--sunken); border-bottom: 1px solid var(--line); font-size: 14px; }
+.banner .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-block: 10px; }
+.banner p { margin: 0; flex: 1 1 260px; color: var(--muted); }
+.banner strong { color: var(--ink); }
+
+main.wrap { padding-block: 22px 60px; display: flex; flex-direction: column; gap: 28px; }
+
+/* En-tête de valeur */
+.hero { display: flex; flex-direction: column; gap: 4px; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.big { font: 700 clamp(34px, 7vw, 48px)/1.1 var(--f-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.chg { font-weight: 600; font-size: 15px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.chg .when { color: var(--muted); font-weight: 500; }
+.up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--muted); }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 6px; font-weight: 600; }
+.pill.up { background: var(--up-soft); } .pill.down { background: var(--down-soft); }
+
+.ranges { display: flex; gap: 2px; margin-top: 14px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.ranges button { background: none; border: 0; padding: 8px 12px; font-size: 13.5px; font-weight: 600; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.ranges button:hover { color: var(--ink); }
+.ranges button[aria-pressed="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+
+.chart { position: relative; height: 280px; margin-top: 8px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.chart .tick { font-size: 11px; fill: var(--faint); }
+.chart-empty { height: 100%; display: grid; place-items: center; color: var(--faint); font-size: 14px; text-align: center; padding: 0 20px; }
+.tip { position: absolute; top: 0; pointer-events: none; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); border-radius: 8px; padding: 5px 9px; font-size: 12.5px; white-space: nowrap; transform: translateX(-50%); }
+.tip b { display: block; font-size: 13.5px; }
+.tip span { color: var(--muted); }
+
+.seg { display: inline-flex; background: var(--sunken); border-radius: 999px; padding: 3px; gap: 2px; }
+.seg button { border: 0; background: none; border-radius: 999px; padding: 4px 11px; font-size: 12.5px; font-weight: 600; color: var(--muted); cursor: pointer; text-transform: none; letter-spacing: 0; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+
+/* Chiffres clés */
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--r); background: var(--surface); }
+.stat { padding: 12px 16px; border-left: 1px solid var(--line); min-width: 0; }
+.stat:first-child { border-left: 0; }
+.stat .k { font-size: 12.5px; color: var(--muted); }
+.stat .v { font-weight: 700; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat .s { font-size: 12.5px; font-weight: 600; }
+@media (max-width: 640px) {
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat:nth-child(3) { border-left: 0; }
+  .stat:nth-child(n+3) { border-top: 1px solid var(--line); }
+}
+.stats.six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stats.six .stat:nth-child(4) { border-left: 0; }
+.stats.six .stat:nth-child(n+4) { border-top: 1px solid var(--line); }
+@media (max-width: 640px) {
+  .stats.six { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stats.six .stat { border-left: 1px solid var(--line); border-top: 0; }
+  .stats.six .stat:nth-child(odd) { border-left: 0; }
+  .stats.six .stat:nth-child(n+3) { border-top: 1px solid var(--line); }
+}
+
+/* Répartition */
+h2 { font: 700 18px/1.2 var(--f-display); margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+.sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.sec-head .sum { color: var(--muted); font-weight: 600; font-size: 14px; }
+.alloc-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; background: var(--sunken); }
+.alloc-bar span { display: block; min-width: 3px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13.5px; }
+.legend div { display: flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.legend b { font-weight: 600; }
+.legend span { color: var(--muted); }
+
+/* Lignes d'actifs */
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) 84px 130px 96px; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); cursor: pointer; text-align: left; background: none; border-left: 0; border-right: 0; border-bottom: 0; width: 100%; }
+.row:first-child { border-top: 0; }
+.row:hover { background: var(--sunken); }
+.row .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .meta { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .val { text-align: right; font-weight: 700; }
+.row .qty { text-align: right; font-size: 12.5px; color: var(--muted); }
+.row .delta { justify-self: end; font-size: 13px; }
+.row svg { display: block; }
+.tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 0 5px; border-radius: 4px; background: var(--sunken); color: var(--muted); margin-left: 6px; vertical-align: 1px; }
+@media (max-width: 640px) {
+  .row { grid-template-columns: minmax(0, 1fr) auto; }
+  .row .spark { display: none; }
+  .row .valbox { grid-column: 2; grid-row: 1; }
+  .row .delta { grid-column: 1; grid-row: 2; justify-self: start; margin-top: -2px; }
+  .row .valbox { grid-row: 1 / span 2; align-self: center; }
+}
+.empty { padding: 22px 16px; color: var(--muted); font-size: 14px; }
+
+/* Vue actif */
+.back { align-self: flex-start; margin-left: -10px; }
+.asset-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.asset-head h1 { font: 700 26px/1.15 var(--f-display); margin: 0; letter-spacing: -.015em; text-wrap: balance; }
+.asset-head .meta { color: var(--muted); font-size: 14px; margin-top: 2px; }
+.asset-head .tools { display: flex; gap: 8px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; }
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.kind { font-weight: 600; }
+.kind.buy { color: var(--up); } .kind.sell { color: var(--down); }
+.del { border: 0; background: none; color: var(--faint); cursor: pointer; border-radius: 6px; padding: 2px 8px; font-size: 13px; }
+.del:hover { color: var(--down); background: var(--down-soft); }
+.del.armed { color: #fff; background: var(--down); }
+
+/* Formulaires */
+.form { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 12px; align-items: end; }
+label.f { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--muted); min-width: 0; }
+input[type=text], input[type=number], input[type=date], input[type=url], input[type=search], select {
+  width: 100%; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 8px 10px; font-size: 15px; color: var(--ink); min-width: 0;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--ink); font-weight: 500; }
+.hint { font-size: 12.5px; color: var(--muted); min-height: 1.2em; }
+.hint.err { color: var(--down); }
+.form-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; align-items: center; }
+.form-actions .hint { margin-right: auto; }
+
+/* Fenêtres */
+dialog { border: 0; padding: 0; border-radius: 16px; background: var(--surface); color: var(--ink); width: min(560px, calc(100vw - 24px)); max-height: calc(100dvh - 40px); box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+dialog::backdrop { background: rgba(10,12,20,.45); }
+.dlg { display: flex; flex-direction: column; max-height: calc(100dvh - 40px); }
+.dlg-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 18px 6px; gap: 12px; }
+.dlg-head h2 { font-size: 20px; }
+.dlg-body { padding: 10px 18px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.results { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; max-height: 240px; overflow-y: auto; }
+.results button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); padding: 9px 12px; cursor: pointer; }
+.results button:first-child { border-top: 0; }
+.results button:hover, .results button:focus-visible { background: var(--sunken); }
+.results .n { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.results .x { font-size: 12.5px; color: var(--muted); }
+.chosen { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--sunken); }
+.chosen b { font-weight: 700; }
+.chosen .x { color: var(--muted); font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note { font-size: 13.5px; color: var(--muted); background: var(--sunken); border-radius: 10px; padding: 10px 12px; margin: 0; }
+.note code { font-size: 12.5px; background: var(--surface); padding: 1px 5px; border-radius: 4px; }
+.divider { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+.setting h3 { margin: 0 0 6px; font-size: 15px; }
+.setting p { margin: 0 0 8px; color: var(--muted); font-size: 13.5px; }
+.row-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 999px; font-size: 14px; font-weight: 600; z-index: 100; box-shadow: var(--shadow); max-width: calc(100vw - 32px); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .row, .btn, .ranges button { transition: background-color .12s, border-color .12s, color .12s; }
+}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand" id="brand" role="link" tabindex="0">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 17l5-5 4 3 8-9" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 6h5v5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Patrimoine
+    </div>
+    <span class="status" id="status"></span>
+    <button class="btn primary" id="btn-add" type="button">
+      <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1v12M1 7h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Ajouter
+    </button>
+    <button class="icon-btn" id="btn-settings" type="button" aria-label="Réglages">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" stroke="currentColor" stroke-width="1.8"/></svg>
+    </button>
+  </div>
+</header>
+
+<div class="banner" id="banner" hidden>
+  <div class="wrap">
+    <p><strong>Données d'exemple.</strong> Les montants et cours affichés sont fictifs, pour te montrer l'appli. Efface-les quand tu veux pour saisir ton vrai patrimoine.</p>
+    <button class="btn" id="btn-clear-demo" type="button">Effacer les exemples</button>
+  </div>
+</div>
+
+<main class="wrap" id="app"></main>
+
+<dialog id="dlg"></dialog>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+"use strict";
+/* ================= Utilitaires ================= */
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const uid = () => Math.random().toString(36).slice(2, 10);
+const pad = n => String(n).padStart(2, "0");
+const isoLocal = d => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+const today = () => isoLocal(new Date());
+const addDays = (s, n) => { const d = new Date(s + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const toUnix = s => Date.parse(s + "T00:00:00Z") / 1000;
+const daysBetween = (a, b) => Math.round((toUnix(b) - toUnix(a)) / 86400);
+
+const EUR = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" });
+const EUR0 = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+const COMPACT = new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 });
+const eur = v => EUR.format(v || 0);
+const eurAuto = v => (Math.abs(v) >= 100000 ? EUR0 : EUR).format(v || 0);
+const signed = v => (v > 0 ? "+" : v < 0 ? "−" : "") + EUR.format(Math.abs(v));
+const pct = v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " %";
+const num = (v, d = 8) => (v ?? 0).toLocaleString("fr-FR", { maximumFractionDigits: d });
+const money = (v, cur) => { try { return new Intl.NumberFormat("fr-FR", { style: "currency", currency: cur || "EUR", maximumFractionDigits: v !== 0 && Math.abs(v) < 1 ? 6 : 2 }).format(v); } catch (e) { return num(v, 4) + " " + cur; } };
+const fmtDate = s => new Date(s + "T00:00:00Z").toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const fmtDateShort = s => new Date(s + "T00:00:00Z").toLocaleDateString("fr-FR", { day: "numeric", month: "short", timeZone: "UTC" });
+const fmtMonth = s => new Date(s + "T00:00:00Z").toLocaleDateString("fr-FR", { month: "short", year: "numeric", timeZone: "UTC" });
+const cls = v => v > 1e-9 ? "up" : v < -1e-9 ? "down" : "flat";
+
+let toastT;
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2600); }
+
+/* ================= Catégories ================= */
+const CATS = {
+  cote: ["ETF", "Action", "Crypto", "Fonds", "Autre placement"],
+  bien: ["Immobilier", "Véhicule", "Épargne / liquidités", "Objet de valeur", "Autre bien"],
+  dette: ["Crédit immobilier", "Crédit auto / conso", "Autre dette"],
+};
+const CAT_COLOR = {
+  "ETF": "#4b55d6", "Action": "#2f8fd8", "Crypto": "#e08a1e", "Fonds": "#7a5bd0", "Autre placement": "#5f7da8",
+  "Immobilier": "#1f9a86", "Véhicule": "#b8578f", "Épargne / liquidités": "#58a843", "Objet de valeur": "#c29a2e", "Autre bien": "#8a8f9c",
+};
+const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", dette: "Dettes" };
+
+/* ================= État & stockage ================= */
+const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
+let S = null, P = {};
+function load() {
+  try { S = JSON.parse(localStorage.getItem(KEY)); } catch (e) { S = null; }
+  try { P = JSON.parse(localStorage.getItem(PKEY)) || {}; } catch (e) { P = {}; }
+  if (!S || !Array.isArray(S.assets)) S = demoState();
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast("Sauvegarde impossible sur cet appareil"); } CALC = null; }
+function saveP() { try { localStorage.setItem(PKEY, JSON.stringify(P)); } catch (e) { /* cache plein : on ignore */ } }
+
+/* ================= Cours fictifs pour l'exemple ================= */
+const DEMO = {};
+function demoSeries(symbol) {
+  if (DEMO[symbol]) return DEMO[symbol];
+  const cfg = symbol === "EX:BTC" ? { p: 17000, mu: .0007, sig: .028, seed: 2, wk: true } : { p: 360, mu: .00038, sig: .0088, seed: 3, wk: false };
+  let s = cfg.seed * 9301 + 49297;
+  const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const d = [], c = []; let p = cfg.p; let day = "2022-06-01"; const end = today();
+  while (day <= end) {
+    const wd = new Date(day + "T00:00:00Z").getUTCDay();
+    if (cfg.wk || (wd !== 0 && wd !== 6)) { p *= Math.exp(cfg.mu + cfg.sig * gauss()); d.push(day); c.push(Math.round(p * 100) / 100); }
+    day = addDays(day, 1);
+  }
+  return DEMO[symbol] = { cur: "EUR", d, c, from: "2022-06-01", at: Date.now() };
+}
+function demoState() {
+  const st = { v: 1, workerUrl: "", demo: true, assets: [] };
+  const w = demoSeries("EX:WORLD"), b = demoSeries("EX:BTC");
+  const etf = { id: uid(), kind: "cote", demo: true, name: "ETF MSCI World", symbol: "EX:WORLD", category: "ETF", currency: "EUR", txs: [], vals: [] };
+  let m = "2024-01-05";
+  while (m <= today()) {
+    const px = lookup(w, m) || 400;
+    etf.txs.push({ id: uid(), t: "buy", date: m, qty: Math.round(200 / px * 1e4) / 1e4, price: px, fees: 0 });
+    const d = new Date(m + "T00:00:00Z"); d.setUTCMonth(d.getUTCMonth() + 1); m = d.toISOString().slice(0, 10);
+  }
+  const btc = { id: uid(), kind: "cote", demo: true, name: "Bitcoin", symbol: "EX:BTC", category: "Crypto", currency: "EUR", txs: [
+    { id: uid(), t: "buy", date: "2024-03-11", qty: .012, price: lookup(b, "2024-03-11"), fees: 0 },
+    { id: uid(), t: "buy", date: "2025-01-15", qty: .006, price: lookup(b, "2025-01-15"), fees: 0 },
+    { id: uid(), t: "sell", date: "2025-12-02", qty: .004, price: lookup(b, "2025-12-02"), fees: 0 },
+  ], vals: [] };
+  const car = { id: uid(), kind: "bien", demo: true, name: "Voiture", category: "Véhicule", interp: true, txs: [], vals: [
+    { id: uid(), date: "2023-06-01", value: 14500 }, { id: uid(), date: "2025-06-01", value: 11200 }, { id: uid(), date: today(), value: 9800 },
+  ] };
+  const livret = { id: uid(), kind: "bien", demo: true, name: "Livret A", category: "Épargne / liquidités", interp: false, txs: [], vals: [
+    { id: uid(), date: "2023-06-01", value: 3000 }, { id: uid(), date: "2024-06-01", value: 5200 }, { id: uid(), date: "2025-09-01", value: 7300 }, { id: uid(), date: "2026-07-01", value: 8100 },
+  ] };
+  const loan = { id: uid(), kind: "dette", demo: true, name: "Crédit auto", category: "Crédit auto / conso", interp: true, txs: [], vals: [
+    { id: uid(), date: "2023-06-01", value: 9000 }, { id: uid(), date: today(), value: 3100 },
+  ] };
+  st.assets.push(etf, btc, car, livret, loan);
+  return st;
+}
+
+/* ================= Relais de prix ================= */
+async function api(path) {
+  if (!S.workerUrl) throw new Error("Relais de prix non configuré (Réglages)");
+  const base = S.workerUrl.trim().replace(/\/+$/, "");
+  let r;
+  try { r = await fetch(base + path); } catch (e) { throw new Error("Relais injoignable : vérifie l'adresse dans les réglages"); }
+  if (!r.ok) {
+    let msg = "Relais : erreur " + r.status;
+    try { const j = await r.json(); msg = j?.chart?.error?.description || j?.error || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+async function fetchChart(symbol, from) {
+  const j = await api(`/chart?symbol=${encodeURIComponent(symbol)}&from=${toUnix(from)}&to=${Math.floor(Date.now() / 1000) + 86400}`);
+  const res = j?.chart?.result?.[0];
+  if (!res) throw new Error(j?.chart?.error?.description || "Symbole introuvable : " + symbol);
+  const off = res.meta.gmtoffset || 0;
+  let cur = res.meta.currency || "EUR", mult = 1;
+  if (cur === "GBp" || cur === "GBX") { cur = "GBP"; mult = .01; }
+  if (cur === "ZAc") { cur = "ZAR"; mult = .01; }
+  if (cur === "ILA") { cur = "ILS"; mult = .01; }
+  const ts = res.timestamp || [], cl = res.indicators?.quote?.[0]?.close || [];
+  const d = [], c = [];
+  for (let i = 0; i < ts.length; i++) {
+    if (cl[i] == null) continue;
+    const ds = new Date((ts[i] + off) * 1000).toISOString().slice(0, 10);
+    if (d.length && d[d.length - 1] === ds) c[c.length - 1] = cl[i] * mult;
+    else if (!d.length || ds > d[d.length - 1]) { d.push(ds); c.push(cl[i] * mult); }
+  }
+  const rmp = res.meta.regularMarketPrice, rmt = res.meta.regularMarketTime;
+  if (rmp && rmt) {
+    const ds = new Date((rmt + off) * 1000).toISOString().slice(0, 10);
+    if (!d.length || ds > d[d.length - 1]) { d.push(ds); c.push(rmp * mult); }
+    else if (ds === d[d.length - 1]) c[c.length - 1] = rmp * mult;
+  }
+  return { cur, d, c, at: Date.now(), name: res.meta.longName || res.meta.shortName || symbol, type: res.meta.instrumentType || "" };
+}
+const fxSym = cur => cur + "EUR=X";
+function getSeries(symbol) { return symbol?.startsWith("EX:") ? demoSeries(symbol) : P[symbol]; }
+const inflight = {};
+async function ensure(symbol, from, force = false) {
+  if (!symbol) return null;
+  if (symbol.startsWith("EX:")) return demoSeries(symbol);
+  const c = P[symbol];
+  const fresh = c && c.from <= from && Date.now() - c.at < 30 * 60e3;
+  if (fresh && !force) { if (c.cur !== "EUR") await ensure(fxSym(c.cur), c.from); return c; }
+  const key = symbol;
+  if (inflight[key]) { await inflight[key].catch(() => {}); if (P[symbol] && P[symbol].from <= from) return P[symbol]; }
+  const job = (async () => {
+    const f = c && c.from < from ? c.from : from;
+    try {
+      const s = await fetchChart(symbol, addDays(f, -10));
+      s.from = f; P[symbol] = s; saveP();
+      if (s.cur !== "EUR") await ensure(fxSym(s.cur), f);
+      return s;
+    } catch (e) { if (c) return c; throw e; }
+  })();
+  inflight[key] = job;
+  try { return await job; } finally { if (inflight[key] === job) delete inflight[key]; }
+}
+function lookup(s, date) {
+  if (!s || !s.d.length) return null;
+  let lo = 0, hi = s.d.length - 1, ans = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (s.d[m] <= date) { ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans >= 0 ? s.c[ans] : null;
+}
+function lookupDate(s, date) {
+  if (!s || !s.d.length) return null;
+  let lo = 0, hi = s.d.length - 1, ans = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (s.d[m] <= date) { ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans >= 0 ? s.d[ans] : null;
+}
+function fxAt(cur, date) {
+  if (!cur || cur === "EUR") return 1;
+  const s = getSeries(fxSym(cur));
+  if (!s || !s.d.length) return null;
+  return lookup(s, date) ?? s.c[0];
+}
+function assetCur(a) { return getSeries(a.symbol)?.cur || a.currency || "EUR"; }
+
+/* ================= Calculs ================= */
+let CALC = null;
+function firstDate(a) {
+  const ds = (a.kind === "cote" ? a.txs : a.vals).map(x => x.date).sort();
+  return ds[0] || null;
+}
+function compute() {
+  if (CALC) return CALC;
+  const t = today();
+  let start = t;
+  for (const a of S.assets) { const f = firstDate(a); if (f && f < start) start = f; }
+  const n = daysBetween(start, t) + 1;
+  const dates = new Array(n);
+  for (let i = 0; i < n; i++) dates[i] = addDays(start, i);
+  const per = {};
+  const total = new Float64Array(n), assets = new Float64Array(n), debts = new Float64Array(n);
+  for (const a of S.assets) {
+    const r = a.kind === "cote" ? quotedDaily(a, dates) : manualDaily(a, dates);
+    per[a.id] = r;
+    for (let i = 0; i < n; i++) {
+      total[i] += r.val[i];
+      if (r.val[i] >= 0) assets[i] += r.val[i]; else debts[i] += r.val[i];
+    }
+  }
+  return CALC = { dates, total, assets, debts, per, start };
+}
+function quotedDaily(a, dates) {
+  const n = dates.length;
+  const tx = [...a.txs].sort((x, y) => x.date < y.date ? -1 : x.date > y.date ? 1 : 0);
+  const s = getSeries(a.symbol);
+  const cur = s?.cur || a.currency || "EUR";
+  const fx = cur === "EUR" ? null : getSeries(fxSym(cur));
+  const val = new Float64Array(n), px = new Array(n).fill(null), qtyArr = new Float64Array(n);
+  let qi = 0, qty = 0, pi = -1, fi = -1, txPx = null;
+  for (let i = 0; i < n; i++) {
+    const d = dates[i];
+    while (qi < tx.length && tx[qi].date <= d) { qty += (tx[qi].t === "sell" ? -1 : 1) * tx[qi].qty; txPx = tx[qi].price; qi++; }
+    if (s) while (pi + 1 < s.d.length && s.d[pi + 1] <= d) pi++;
+    if (fx) while (fi + 1 < fx.d.length && fx.d[fi + 1] <= d) fi++;
+    const p = s && pi >= 0 ? s.c[pi] : txPx;
+    const f = cur === "EUR" ? 1 : fx && fx.d.length ? fx.c[Math.max(fi, 0)] : 1;
+    if (Math.abs(qty) < 1e-12) qty = 0;
+    qtyArr[i] = qty;
+    px[i] = p != null ? p * f : null;
+    val[i] = qty > 0 && p != null ? qty * p * f : 0;
+  }
+  return { val, px, qty: qtyArr };
+}
+function manualDaily(a, dates) {
+  const n = dates.length, v = [...a.vals].sort((x, y) => x.date < y.date ? -1 : 1);
+  const sign = a.kind === "dette" ? -1 : 1;
+  const val = new Float64Array(n);
+  let j = -1;
+  const tv = v.map(x => toUnix(x.date));
+  for (let i = 0; i < n; i++) {
+    const d = dates[i];
+    while (j + 1 < v.length && v[j + 1].date <= d) j++;
+    if (j < 0) { val[i] = 0; continue; }
+    let x = v[j].value;
+    if (a.interp && j + 1 < v.length) {
+      const f = (toUnix(d) - tv[j]) / (tv[j + 1] - tv[j]);
+      x = v[j].value + (v[j + 1].value - v[j].value) * f;
+    }
+    val[i] = sign * x;
+  }
+  return { val, px: null, qty: null };
+}
+function positionStats(a) {
+  // Coût moyen pondéré, en euros (au taux de change du jour de la transaction)
+  const tx = [...a.txs].sort((x, y) => x.date < y.date ? -1 : 1);
+  const cur = assetCur(a);
+  let q = 0, cost = 0, realized = 0, fxMissing = false;
+  for (const t of tx) {
+    let f = fxAt(cur, t.date); if (f == null) { f = 1; fxMissing = cur !== "EUR"; }
+    const amt = t.qty * t.price * f, fees = +t.fees || 0;
+    if (t.t === "sell") {
+      const avg = q > 0 ? cost / q : 0;
+      const qs = Math.min(t.qty, q);
+      realized += qs * t.price * f - fees - avg * qs;
+      cost -= avg * qs; q -= qs;
+    } else { cost += amt + fees; q += t.qty; }
+  }
+  if (q < 1e-12) { q = 0; cost = 0; }
+  const C = compute(), r = C.per[a.id];
+  const value = r ? r.val[r.val.length - 1] : 0;
+  const lastPx = r ? r.px[r.px.length - 1] : null;
+  const s = getSeries(a.symbol);
+  const nativePx = s && s.c.length ? s.c[s.c.length - 1] : (tx.length ? tx[tx.length - 1].price : null);
+  return { qty: q, cost, pru: q > 0 ? cost / q : 0, value, latent: value - cost, realized, lastPx, nativePx, cur, fxMissing, lastDate: s?.d?.[s.d.length - 1] };
+}
+function holdingsAt(a, date, excludeId) {
+  let q = 0;
+  for (const t of a.txs) if (t.id !== excludeId && t.date <= date) q += (t.t === "sell" ? -1 : 1) * t.qty;
+  return q;
+}
+
+/* ================= Graphique ================= */
+const RANGES = [["1S", 7], ["1M", 30], ["6M", 182], ["AAJ", "ytd"], ["1A", 365], ["5A", 1826], ["MAX", "max"]];
+const RANGE_WHEN = { "1S": "sur 1 semaine", "1M": "sur 1 mois", "6M": "sur 6 mois", "AAJ": "depuis le 1er janvier", "1A": "sur 1 an", "5A": "sur 5 ans", "MAX": "depuis le début" };
+const UI = { view: "home", assetId: null, range: "1A", mode: "val" };
+function rangeStart(key, globalStart) {
+  const t = today();
+  const r = RANGES.find(x => x[0] === key)[1];
+  let s = r === "max" ? globalStart : r === "ytd" ? t.slice(0, 4) + "-01-01" : addDays(t, -r);
+  return s < globalStart ? globalStart : s;
+}
+function niceStep(range, count) {
+  const raw = range / count, mag = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / mag;
+  return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * mag;
+}
+function drawChart(el, dates, vals, opts = {}) {
+  const { onHover, fmt = eur, axisFmt } = opts;
+  el.innerHTML = "";
+  // ignorer les points vides (null) en début de série
+  let k = 0; while (k < vals.length && vals[k] == null) k++;
+  dates = dates.slice(k); vals = vals.slice(k);
+  const n = vals.length;
+  if (n < 2) { el.innerHTML = `<div class="chart-empty">${opts.empty || "Pas encore assez de données sur cette période."}</div>`; return; }
+  const W = el.clientWidth || 600, H = el.clientHeight || 280;
+  const padL = 4, padR = 58, padT = 34, padB = 24;
+  let min = Infinity, max = -Infinity;
+  for (const v of vals) { if (v < min) min = v; if (v > max) max = v; }
+  if (max - min < 1e-9) { const m = Math.abs(max) * .02 || 1; min -= m; max += m; }
+  const span = max - min; min -= span * .06; max += span * .06;
+  const step = niceStep(max - min, 4);
+  const ticks = []; for (let v = Math.ceil(min / step) * step; v <= max; v += step) ticks.push(v);
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const X = i => padL + i * iw / (n - 1), Y = v => padT + (max - v) * ih / (max - min);
+  const up = vals[n - 1] >= vals[0];
+  const col = up ? "var(--up)" : "var(--down)";
+  // échantillonnage si beaucoup de points
+  const stride = Math.max(1, Math.floor(n / (iw * 1.5)));
+  let d = "";
+  for (let i = 0; i < n; i += stride) d += (d ? "L" : "M") + X(i).toFixed(1) + " " + Y(vals[i]).toFixed(1);
+  d += "L" + X(n - 1).toFixed(1) + " " + Y(vals[n - 1]).toFixed(1);
+  const area = d + `L${X(n - 1).toFixed(1)} ${padT + ih}L${X(0).toFixed(1)} ${padT + ih}Z`;
+  const gid = "g" + uid();
+  const yFmt = axisFmt || (v => (Math.abs(max) >= 10000 ? COMPACT.format(v) : v.toLocaleString("fr-FR", { maximumFractionDigits: Math.abs(step) < 1 ? 2 : 0 })) + " €");
+  const spanDays = daysBetween(dates[0], dates[n - 1]);
+  const xl = spanDays <= 70 ? fmtDateShort : fmtMonth;
+  const xticks = []; const nx = W < 480 ? 3 : 5;
+  for (let j = 0; j < nx; j++) xticks.push(Math.round(j * (n - 1) / (nx - 1)));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Graphique d'évolution">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${up ? "var(--up)" : "var(--down)"}" stop-opacity=".18"/><stop offset="1" stop-color="${up ? "var(--up)" : "var(--down)"}" stop-opacity="0"/></linearGradient></defs>`;
+  for (const t of ticks) svg += `<line x1="${padL}" x2="${padL + iw}" y1="${Y(t).toFixed(1)}" y2="${Y(t).toFixed(1)}" stroke="var(--line)" stroke-width="1"/><text class="tick" x="${W - 2}" y="${(Y(t) + 4).toFixed(1)}" text-anchor="end">${esc(yFmt(t))}</text>`;
+  svg += `<line x1="${padL}" x2="${padL + iw}" y1="${Y(vals[0]).toFixed(1)}" y2="${Y(vals[0]).toFixed(1)}" stroke="var(--faint)" stroke-width="1" stroke-dasharray="2 4"/>`;
+  svg += `<path d="${area}" fill="url(#${gid})" stroke="none"/><path d="${d}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  xticks.forEach((i, j) => { const anchor = j === 0 ? "start" : j === xticks.length - 1 ? "end" : "middle"; svg += `<text class="tick" x="${X(i).toFixed(1)}" y="${H - 4}" text-anchor="${anchor}">${esc(xl(dates[i]))}</text>`; });
+  svg += `<circle cx="${X(n - 1).toFixed(1)}" cy="${Y(vals[n - 1]).toFixed(1)}" r="3.5" fill="${col}" stroke="var(--bg)" stroke-width="2"/>`;
+  svg += `<g class="hov" visibility="hidden"><line class="hl" y1="${padT - 6}" y2="${padT + ih}" stroke="var(--faint)" stroke-width="1"/><circle class="hd" r="5" fill="${col}" stroke="var(--bg)" stroke-width="2"/></g></svg>`;
+  el.innerHTML = svg + `<div class="tip" hidden></div>`;
+  const sv = $("svg", el), hov = $(".hov", el), hl = $(".hl", el), hd = $(".hd", el), tip = $(".tip", el);
+  const show = ev => {
+    const rect = sv.getBoundingClientRect();
+    const px = (ev.clientX - rect.left) * W / rect.width;
+    const i = Math.max(0, Math.min(n - 1, Math.round((px - padL) / iw * (n - 1))));
+    const x = X(i), y = Y(vals[i]);
+    hov.setAttribute("visibility", "visible");
+    hl.setAttribute("x1", x); hl.setAttribute("x2", x); hd.setAttribute("cx", x); hd.setAttribute("cy", y);
+    tip.hidden = false;
+    tip.innerHTML = `<b>${esc(fmt(vals[i]))}</b><span>${esc(fmtDate(dates[i]))}</span>`;
+    const xp = x * rect.width / W, tw = tip.offsetWidth;
+    tip.style.left = Math.max(tw / 2, Math.min(rect.width - tw / 2, xp)) + "px";
+    onHover && onHover(i, dates, vals);
+  };
+  const hide = () => { hov.setAttribute("visibility", "hidden"); tip.hidden = true; onHover && onHover(null, dates, vals); };
+  sv.addEventListener("pointermove", show);
+  sv.addEventListener("pointerdown", show);
+  sv.addEventListener("pointerleave", hide);
+  sv.addEventListener("pointercancel", hide);
+}
+function spark(vals, w = 84, h = 28) {
+  let k = 0; while (k < vals.length && !vals[k]) k++;
+  const v = Array.from(vals).slice(k);
+  if (v.length < 2) return `<svg width="${w}" height="${h}"></svg>`;
+  let mn = Math.min(...v), mx = Math.max(...v); if (mx - mn < 1e-9) { mx += 1; mn -= 1; }
+  const stride = Math.max(1, Math.floor(v.length / 60));
+  let d = "";
+  for (let i = 0; i < v.length; i += stride) d += (d ? "L" : "M") + (i * w / (v.length - 1)).toFixed(1) + " " + (2 + (mx - v[i]) * (h - 4) / (mx - mn)).toFixed(1);
+  d += "L" + w + " " + (2 + (mx - v[v.length - 1]) * (h - 4) / (mx - mn)).toFixed(1);
+  const up = Math.abs(v[v.length - 1]) >= Math.abs(v[0]) === (v[v.length - 1] >= 0);
+  const c = v[v.length - 1] >= v[0] ? "var(--up)" : "var(--down)";
+  return `<svg width="${w}" height="${h}" aria-hidden="true"><path d="${d}" fill="none" stroke="${c}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+}
+
+/* ================= Rendu : accueil ================= */
+function rangeButtons() {
+  return `<div class="ranges" role="group" aria-label="Période">${RANGES.map(([k]) => `<button type="button" data-range="${k}" aria-pressed="${UI.range === k}">${k}</button>`).join("")}</div>`;
+}
+function changeLine(a, b, when) {
+  const dv = b - a, dp = Math.abs(a) > 1e-9 ? dv / Math.abs(a) * 100 : null;
+  const c = cls(dv);
+  return `<span class="${c}">${signed(dv)}</span>${dp != null ? `<span class="pill ${c}">${pct(dp)}</span>` : ""}<span class="when">${esc(when)}</span>`;
+}
+function renderHome() {
+  const C = compute(), app = $("#app");
+  if (!S.assets.length) {
+    app.innerHTML = `<section class="hero"><div class="eyebrow">Patrimoine net</div><div class="big">${eur(0)}</div></section>
+      <div class="form"><h2>Commence par ajouter un premier élément</h2>
+      <p class="hint" style="font-size:14px">Un placement coté (ETF, action, crypto) se valorise tout seul grâce aux cours du marché. Un bien (voiture, logement, livret) ou une dette se met à jour avec tes estimations.</p>
+      <div class="form-actions"><button class="btn" type="button" id="e-settings">Configurer le relais de prix</button><button class="btn primary" type="button" id="e-add">Ajouter un élément</button></div></div>`;
+    $("#e-add").onclick = () => openAdd();
+    $("#e-settings").onclick = () => openSettings();
+    return;
+  }
+  const i0 = Math.max(0, daysBetween(C.start, rangeStart(UI.range, C.start)));
+  const dates = C.dates.slice(i0), vals = Array.from(C.total.slice(i0));
+  const last = C.total[C.total.length - 1];
+  const totAssets = C.assets[C.assets.length - 1], totDebts = C.debts[C.debts.length - 1];
+  let invested = 0, latentAll = 0;
+  const pos = {};
+  for (const a of S.assets) if (a.kind === "cote") { const p = positionStats(a); pos[a.id] = p; invested += p.cost; latentAll += p.latent; }
+
+  // répartition
+  const byCat = {};
+  for (const a of S.assets) { if (a.kind === "dette") continue; const v = C.per[a.id].val[C.dates.length - 1]; if (v > 0) byCat[a.category] = (byCat[a.category] || 0) + v; }
+  const cats = Object.entries(byCat).sort((x, y) => y[1] - x[1]);
+  const catSum = cats.reduce((s, x) => s + x[1], 0) || 1;
+
+  const groups = ["cote", "bien", "dette"].map(kind => {
+    const list = S.assets.filter(a => a.kind === kind);
+    if (!list.length) return "";
+    const sum = list.reduce((s, a) => s + C.per[a.id].val[C.dates.length - 1], 0);
+    const rows = list.map(a => rowHtml(a, C, pos[a.id])).join("");
+    return `<section><div class="sec-head"><h2>${KIND_LABEL[kind]}</h2><span class="sum">${eur(sum)}</span></div><div class="list">${rows}</div></section>`;
+  }).join("");
+
+  app.innerHTML = `
+  <section class="hero">
+    <div class="eyebrow">Patrimoine net</div>
+    <div class="big" id="big">${eur(last)}</div>
+    <div class="chg" id="chg">${changeLine(vals[0], last, RANGE_WHEN[UI.range])}</div>
+    ${rangeButtons()}
+    <div class="chart" id="chart"></div>
+  </section>
+  <section class="stats">
+    <div class="stat"><div class="k">Actifs</div><div class="v">${eur(totAssets)}</div></div>
+    <div class="stat"><div class="k">Dettes</div><div class="v">${eur(Math.abs(totDebts))}</div></div>
+    <div class="stat"><div class="k">Investi en placements</div><div class="v">${eur(invested)}</div></div>
+    <div class="stat"><div class="k">Plus-value latente</div><div class="v ${cls(latentAll)}">${signed(latentAll)}</div><div class="s ${cls(latentAll)}">${invested > 0 ? pct(latentAll / invested * 100) : ""}</div></div>
+  </section>
+  ${cats.length ? `<section><div class="sec-head"><h2>Répartition des actifs</h2></div>
+    <div class="alloc-bar">${cats.map(([c, v]) => `<span style="width:${(v / catSum * 100).toFixed(2)}%;background:${CAT_COLOR[c] || "#888"}" title="${esc(c)}"></span>`).join("")}</div>
+    <div class="legend">${cats.map(([c, v]) => `<div><i style="background:${CAT_COLOR[c] || "#888"}"></i><b>${esc(c)}</b><span>${(v / catSum * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % · ${eurAuto(v)}</span></div>`).join("")}</div></section>` : ""}
+  ${groups}`;
+
+  const big = $("#big"), chg = $("#chg");
+  drawChart($("#chart"), dates, vals, {
+    onHover: (i, ds, vs) => {
+      if (i == null) { big.textContent = eur(last); chg.innerHTML = changeLine(vals[0], last, RANGE_WHEN[UI.range]); }
+      else { big.textContent = eur(vs[i]); chg.innerHTML = changeLine(vs[0], vs[i], "du " + fmtDateShort(ds[0]) + " au " + fmtDate(ds[i])); }
+    },
+  });
+  bindRanges(renderHome);
+  $$(".row", app).forEach(r => r.onclick = () => openAsset(r.dataset.id));
+}
+function rowHtml(a, C, p) {
+  const r = C.per[a.id], n = C.dates.length, v = r.val[n - 1];
+  const from = Math.max(0, n - 91);
+  let meta, delta;
+  if (a.kind === "cote") {
+    meta = `${esc(a.symbol.startsWith("EX:") ? "Exemple" : a.symbol)} · ${esc(a.category)}`;
+    delta = p.cost > 0 ? `<span class="pill ${cls(p.latent)}">${pct(p.latent / p.cost * 100)}</span>` : `<span class="flat">—</span>`;
+  } else {
+    const vs = [...a.vals].sort((x, y) => x.date < y.date ? -1 : 1);
+    meta = `${esc(a.category)} · estimé le ${vs.length ? fmtDateShort(vs[vs.length - 1].date) : "—"}`;
+    const first = vs[0]?.value || 0, lastv = vs[vs.length - 1]?.value || 0;
+    const dv = lastv - first, dp = first ? dv / first * 100 : 0;
+    delta = vs.length > 1 ? `<span class="pill ${a.kind === "dette" ? cls(-dv) : cls(dv)}">${pct(dp)}</span>` : `<span class="flat">—</span>`;
+  }
+  return `<button type="button" class="row" data-id="${a.id}">
+    <div style="min-width:0"><div class="name">${esc(a.name)}${a.demo ? `<span class="tag">exemple</span>` : ""}</div><div class="meta">${meta}</div></div>
+    <div class="spark">${spark(r.val.slice(from).map(Math.abs))}</div>
+    <div class="valbox"><div class="val">${eur(v)}</div>${a.kind === "cote" ? `<div class="qty">${num(p.qty, 6)} part${p.qty > 1 ? "s" : ""}</div>` : ""}</div>
+    <div class="delta">${delta}</div>
+  </button>`;
+}
+function bindRanges(rerender) {
+  $$(".ranges button").forEach(b => b.onclick = () => { UI.range = b.dataset.range; rerender(); });
+}
+
+/* ================= Rendu : détail d'un actif ================= */
+function renderAsset() {
+  const a = S.assets.find(x => x.id === UI.assetId);
+  if (!a) { UI.view = "home"; return render(); }
+  const C = compute(), r = C.per[a.id], n = C.dates.length;
+  const i0 = Math.max(0, daysBetween(C.start, rangeStart(UI.range, firstDate(a) || C.start)));
+  const isQ = a.kind === "cote";
+  const showPx = isQ && UI.mode === "px";
+  const series = showPx ? r.px : Array.from(r.val).map(x => a.kind === "dette" ? -x : x);
+  const dates = C.dates.slice(i0), vals = series.slice(i0);
+  const cur = isQ ? assetCur(a) : "EUR";
+  const p = isQ ? positionStats(a) : null;
+  const lastV = vals[vals.length - 1] ?? 0;
+  let k0 = 0; while (k0 < vals.length && vals[k0] == null) k0++;
+  const firstV = vals[k0] ?? 0;
+  const label = showPx ? "Cours en euros" : a.kind === "dette" ? "Reste à rembourser" : isQ ? "Valeur détenue" : "Valeur estimée";
+  const app = $("#app");
+
+  let statsHtml = "", bodyHtml = "";
+  if (isQ) {
+    statsHtml = `<section class="stats six">
+      <div class="stat"><div class="k">Quantité détenue</div><div class="v">${num(p.qty, 8)}</div></div>
+      <div class="stat"><div class="k">Dernier cours</div><div class="v">${p.nativePx != null ? money(p.nativePx, cur) : "—"}</div><div class="s flat">${p.lastDate ? "au " + fmtDateShort(p.lastDate) : ""}</div></div>
+      <div class="stat"><div class="k">Prix de revient unitaire</div><div class="v">${p.qty > 0 ? eur(p.pru) : "—"}</div></div>
+      <div class="stat"><div class="k">Montant investi</div><div class="v">${eur(p.cost)}</div></div>
+      <div class="stat"><div class="k">Plus-value latente</div><div class="v ${cls(p.latent)}">${signed(p.latent)}</div><div class="s ${cls(p.latent)}">${p.cost > 0 ? pct(p.latent / p.cost * 100) : ""}</div></div>
+      <div class="stat"><div class="k">Plus-value réalisée</div><div class="v ${cls(p.realized)}">${signed(p.realized)}</div></div>
+    </section>`;
+    const txs = [...a.txs].sort((x, y) => x.date < y.date ? 1 : -1);
+    bodyHtml = `<section><div class="sec-head"><h2>Achats et ventes</h2></div>
+      <form class="form" id="txform" autocomplete="off">
+        <div class="fields">
+          <label class="f">Opération<select id="tx-t"><option value="buy">Achat</option><option value="sell">Vente</option></select></label>
+          <label class="f">Date<input type="date" id="tx-date" max="${today()}" value="${today()}" required></label>
+          <label class="f">Quantité<input type="number" id="tx-qty" step="any" min="0" inputmode="decimal" placeholder="ex. 0,015" required></label>
+          <label class="f">Prix unitaire (${esc(cur)})<input type="number" id="tx-price" step="any" min="0" inputmode="decimal" placeholder="auto" required></label>
+          <label class="f">Frais (€)<input type="number" id="tx-fees" step="any" min="0" inputmode="decimal" placeholder="0"></label>
+        </div>
+        <div class="form-actions"><span class="hint" id="tx-hint"></span><button class="btn primary" type="submit">Enregistrer</button></div>
+      </form>
+      ${txs.length ? `<div class="tbl" style="margin-top:12px"><table>
+        <thead><tr><th>Date</th><th>Opération</th><th class="num">Quantité</th><th class="num">Prix unitaire</th><th class="num">Montant</th><th class="num">Frais</th><th></th></tr></thead>
+        <tbody>${txs.map(t => `<tr><td>${fmtDate(t.date)}</td><td class="kind ${t.t}">${t.t === "sell" ? "Vente" : "Achat"}</td><td class="num">${num(t.qty, 8)}</td><td class="num">${money(t.price, cur)}</td><td class="num">${money(t.qty * t.price, cur)}</td><td class="num">${t.fees ? eur(t.fees) : "—"}</td><td class="num"><button type="button" class="del" data-del="${t.id}" aria-label="Supprimer l'opération">Supprimer</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="empty">Aucune opération pour l'instant. Indique la quantité et la date : le prix du jour est récupéré automatiquement.</p>`}
+    </section>`;
+  } else {
+    const vs = [...a.vals].sort((x, y) => x.date < y.date ? 1 : -1);
+    const first = vs[vs.length - 1]?.value || 0, lastv = vs[0]?.value || 0;
+    const dv = lastv - first;
+    const good = a.kind === "dette" ? -dv : dv;
+    statsHtml = `<section class="stats">
+      <div class="stat"><div class="k">${a.kind === "dette" ? "Reste dû" : "Dernière estimation"}</div><div class="v">${eur(lastv)}</div><div class="s flat">${vs[0] ? "le " + fmtDateShort(vs[0].date) : ""}</div></div>
+      <div class="stat"><div class="k">${a.kind === "dette" ? "Montant de départ" : "Première estimation"}</div><div class="v">${eur(first)}</div><div class="s flat">${vs.length ? "le " + fmtDateShort(vs[vs.length - 1].date) : ""}</div></div>
+      <div class="stat"><div class="k">${a.kind === "dette" ? "Remboursé" : "Évolution"}</div><div class="v ${cls(good)}">${a.kind === "dette" ? eur(-dv) : signed(dv)}</div><div class="s ${cls(good)}">${first ? pct(dv / first * 100) : ""}</div></div>
+      <div class="stat"><div class="k">Entre deux estimations</div><div class="v" style="font-size:15px">${a.interp ? "Lissé" : "Palier"}</div><div class="s flat">${a.interp ? "évolution progressive" : "valeur constante"}</div></div>
+    </section>`;
+    bodyHtml = `<section><div class="sec-head"><h2>${a.kind === "dette" ? "Reste dû au fil du temps" : "Estimations"}</h2></div>
+      <form class="form" id="valform" autocomplete="off">
+        <div class="fields">
+          <label class="f">Date<input type="date" id="v-date" max="${today()}" value="${today()}" required></label>
+          <label class="f">${a.kind === "dette" ? "Reste dû (€)" : "Valeur (€)"}<input type="number" id="v-value" step="any" min="0" inputmode="decimal" required></label>
+        </div>
+        <div class="form-actions"><span class="hint">${a.kind === "dette" ? "Reporte le capital restant dû indiqué par ta banque." : "Mets à jour la valeur quand tu as une nouvelle estimation (cote Argus, estimation immo, solde du livret…)."}</span><button class="btn primary" type="submit">Enregistrer</button></div>
+      </form>
+      ${vs.length ? `<div class="tbl" style="margin-top:12px"><table><thead><tr><th>Date</th><th class="num">${a.kind === "dette" ? "Reste dû" : "Valeur"}</th><th></th></tr></thead>
+        <tbody>${vs.map(v => `<tr><td>${fmtDate(v.date)}</td><td class="num">${eur(v.value)}</td><td class="num"><button type="button" class="del" data-del="${v.id}" aria-label="Supprimer l'estimation">Supprimer</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+    </section>`;
+  }
+
+  app.innerHTML = `
+    <button class="btn ghost back" type="button" id="back">← Patrimoine</button>
+    <div class="asset-head">
+      <div style="min-width:0"><h1>${esc(a.name)}${a.demo ? `<span class="tag">exemple</span>` : ""}</h1>
+      <div class="meta">${isQ ? esc(a.symbol.startsWith("EX:") ? "Cours fictif" : a.symbol) + " · " : ""}${esc(a.category)}${isQ && cur !== "EUR" ? " · coté en " + esc(cur) + ", converti en euros" : ""}</div></div>
+      <div class="tools"><button class="btn" type="button" id="edit">Modifier</button></div>
+    </div>
+    <section class="hero">
+      <div class="eyebrow"><span id="lbl">${label}</span>${isQ ? `<span class="seg" role="group" aria-label="Affichage"><button type="button" data-mode="val" aria-pressed="${!showPx}">Ma position</button><button type="button" data-mode="px" aria-pressed="${showPx}">Cours</button></span>` : ""}</div>
+      <div class="big" id="big">${eur(lastV)}</div>
+      <div class="chg" id="chg"></div>
+      ${rangeButtons()}
+      <div class="chart" id="chart"></div>
+    </section>
+    ${statsHtml}
+    ${bodyHtml}`;
+
+  const big = $("#big"), chg = $("#chg");
+  const goodSign = a.kind === "dette" ? -1 : 1;
+  const chgLine = (x, y, when) => {
+    if (a.kind !== "dette") return changeLine(x, y, when);
+    const dv = y - x; return `<span class="${cls(-dv)}">${dv <= 0 ? "−" : "+"}${EUR.format(Math.abs(dv))}</span><span class="when">${esc(when)}</span>`;
+  };
+  chg.innerHTML = chgLine(firstV, lastV, RANGE_WHEN[UI.range]);
+  drawChart($("#chart"), dates, vals, {
+    empty: isQ && !a.txs.length ? "Ajoute un premier achat pour voir l'évolution." : undefined,
+    onHover: (i, ds, vs) => {
+      if (i == null) { big.textContent = eur(lastV); chg.innerHTML = chgLine(firstV, lastV, RANGE_WHEN[UI.range]); }
+      else { big.textContent = eur(vs[i]); chg.innerHTML = chgLine(vs[0], vs[i], "du " + fmtDateShort(ds[0]) + " au " + fmtDate(ds[i])); }
+    },
+  });
+  bindRanges(renderAsset);
+  $("#back").onclick = () => { UI.view = "home"; UI.mode = "val"; render(); scrollTo(0, 0); };
+  $("#edit").onclick = () => openEdit(a);
+  $$(".seg button", app).forEach(b => b.onclick = () => { UI.mode = b.dataset.mode; renderAsset(); });
+  armDeletes(app, id => {
+    if (isQ) a.txs = a.txs.filter(t => t.id !== id); else a.vals = a.vals.filter(v => v.id !== id);
+    save(); renderAsset(); toast("Supprimé");
+  });
+
+  if (isQ) {
+    const f = $("#txform");
+    bindAutoPrice(a.symbol, $("#tx-date", f), $("#tx-price", f), $("#tx-hint", f), () => cur);
+    f.onsubmit = e => {
+      e.preventDefault();
+      const t = $("#tx-t", f).value, date = $("#tx-date", f).value, qty = parseFloat($("#tx-qty", f).value), price = parseFloat($("#tx-price", f).value), fees = parseFloat($("#tx-fees", f).value) || 0;
+      const hint = $("#tx-hint", f);
+      if (!date || !(qty > 0) || !(price >= 0) || isNaN(price)) { hint.className = "hint err"; hint.textContent = "Renseigne la date, une quantité positive et le prix."; return; }
+      if (t === "sell") {
+        const h = holdingsAt(a, date);
+        if (qty > h + 1e-12) { hint.className = "hint err"; hint.textContent = `Tu ne détenais que ${num(h, 8)} à cette date.`; return; }
+      }
+      a.txs.push({ id: uid(), t, date, qty, price, fees });
+      save(); renderAsset(); toast(t === "sell" ? "Vente enregistrée" : "Achat enregistré");
+    };
+  } else {
+    const f = $("#valform");
+    f.onsubmit = e => {
+      e.preventDefault();
+      const date = $("#v-date", f).value, value = parseFloat($("#v-value", f).value);
+      if (!date || isNaN(value) || value < 0) return;
+      const same = a.vals.find(v => v.date === date);
+      if (same) same.value = value; else a.vals.push({ id: uid(), date, value });
+      save(); renderAsset(); toast("Estimation enregistrée");
+    };
+  }
+}
+function armDeletes(root, onConfirm) {
+  $$("[data-del]", root).forEach(b => b.onclick = () => {
+    if (b.classList.contains("armed")) return onConfirm(b.dataset.del);
+    $$(".del.armed", root).forEach(x => { x.classList.remove("armed"); x.textContent = "Supprimer"; });
+    b.classList.add("armed"); b.textContent = "Confirmer";
+    setTimeout(() => { if (b.isConnected) { b.classList.remove("armed"); b.textContent = "Supprimer"; } }, 4000);
+  });
+}
+
+/* Prix automatique à la date choisie */
+function bindAutoPrice(symbolOrFn, dateEl, priceEl, hintEl, curFn) {
+  let touched = false, seq = 0;
+  priceEl.addEventListener("input", () => { touched = priceEl.value !== ""; });
+  const run = async () => {
+    const symbol = typeof symbolOrFn === "function" ? symbolOrFn() : symbolOrFn;
+    const date = dateEl.value;
+    if (!symbol || !date) return;
+    const my = ++seq;
+    hintEl.className = "hint"; hintEl.textContent = "Recherche du cours…";
+    try {
+      const s = await ensure(symbol, date);
+      if (my !== seq) return;
+      const px = lookup(s, date), d = lookupDate(s, date);
+      if (px == null) { hintEl.textContent = "Pas de cours connu à cette date : saisis le prix."; return; }
+      if (!touched) priceEl.value = +px.toPrecision(10);
+      const c = s.cur || (curFn && curFn()) || "EUR";
+      hintEl.textContent = (d === date ? "Clôture du " : "Dernière clôture connue, le ") + fmtDate(d) + " : " + money(px, c) + (touched ? " (ton prix est conservé)" : "");
+    } catch (e) {
+      if (my !== seq) return;
+      hintEl.className = "hint err"; hintEl.textContent = e.message + " — saisis le prix à la main.";
+    }
+  };
+  dateEl.addEventListener("change", run);
+  run();
+  return run;
+}
+
+/* ================= Fenêtres ================= */
+const dlg = $("#dlg");
+function openDialog(html, onMount) {
+  dlg.innerHTML = `<div class="dlg">${html}</div>`;
+  $$("[data-close]", dlg).forEach(b => b.onclick = () => dlg.close());
+  if (!dlg.open) dlg.showModal();
+  onMount && onMount(dlg);
+}
+dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
+const closeBtn = `<button class="icon-btn" type="button" data-close aria-label="Fermer"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>`;
+
+function openAdd(kind = "cote") {
+  const opts = c => CATS[c].map(x => `<option>${esc(x)}</option>`).join("");
+  openDialog(`
+    <div class="dlg-head"><h2>Ajouter</h2>${closeBtn}</div>
+    <div class="dlg-body">
+      <div class="seg" role="group" aria-label="Type d'élément" style="align-self:flex-start">
+        <button type="button" data-k="cote" aria-pressed="${kind === "cote"}">Placement coté</button>
+        <button type="button" data-k="bien" aria-pressed="${kind === "bien"}">Bien</button>
+        <button type="button" data-k="dette" aria-pressed="${kind === "dette"}">Dette</button>
+      </div>
+      <form id="addform" autocomplete="off" style="display:flex;flex-direction:column;gap:14px">
+      ${kind === "cote" ? `
+        ${S.workerUrl ? "" : `<p class="note">Le relais de prix n'est pas encore configuré (Réglages). Tu peux quand même saisir un symbole Yahoo Finance, par exemple <code>CW8.PA</code>, <code>WPEA.PA</code> ou <code>BTC-EUR</code>, et le prix à la main.</p>`}
+        <label class="f">Rechercher (nom, ISIN ou symbole)<input type="search" id="q" placeholder="ex. MSCI World, bitcoin, Air Liquide"></label>
+        <div class="results" id="results" hidden></div>
+        <div class="chosen" id="chosen" hidden></div>
+        <div class="fields">
+          <label class="f">Symbole<input type="text" id="a-symbol" placeholder="ex. BTC-EUR" required autocapitalize="characters"></label>
+          <label class="f">Catégorie<select id="a-cat">${opts("cote")}</select></label>
+        </div>
+        <label class="f">Nom affiché<input type="text" id="a-name" placeholder="ex. Bitcoin" required></label>
+        <hr class="divider">
+        <div class="setting"><h3>Premier achat</h3><p>Facultatif. Tu pourras ajouter les autres achats et ventes ensuite.</p></div>
+        <div class="fields">
+          <label class="f">Date<input type="date" id="a-date" max="${today()}"></label>
+          <label class="f">Quantité<input type="number" id="a-qty" step="any" min="0" inputmode="decimal"></label>
+          <label class="f">Prix unitaire<input type="number" id="a-price" step="any" min="0" inputmode="decimal" placeholder="auto"></label>
+        </div>
+        <span class="hint" id="a-hint"></span>
+      ` : `
+        <label class="f">Nom<input type="text" id="a-name" placeholder="${kind === "dette" ? "ex. Prêt immobilier" : "ex. Citroën C4, Résidence principale, Livret A"}" required></label>
+        <label class="f">Catégorie<select id="a-cat">${opts(kind)}</select></label>
+        <div class="fields">
+          <label class="f">Date<input type="date" id="a-date" max="${today()}" value="${today()}" required></label>
+          <label class="f">${kind === "dette" ? "Reste dû (€)" : "Valeur (€)"}<input type="number" id="a-value" step="any" min="0" inputmode="decimal" required></label>
+        </div>
+        <label class="check"><input type="checkbox" id="a-interp" ${kind === "dette" ? "checked" : ""}> Évolution progressive entre deux ${kind === "dette" ? "relevés" : "estimations"}</label>
+        <span class="hint">${kind === "dette" ? "Le graphique descend régulièrement d'un relevé à l'autre, comme un remboursement mensuel." : "Utile pour un véhicule qui perd de la valeur. Décoché, la valeur reste fixe jusqu'à la prochaine estimation (livret, compte)."}</span>
+      `}
+        <div class="form-actions"><button class="btn" type="button" data-close>Annuler</button><button class="btn primary" type="submit">Ajouter</button></div>
+      </form>
+    </div>`, d => {
+    $$("[data-k]", d).forEach(b => b.onclick = () => openAdd(b.dataset.k));
+    const f = $("#addform", d);
+    if (kind !== "cote") {
+      const cat = $("#a-cat", d), ip = $("#a-interp", d);
+      if (kind === "bien") cat.onchange = () => { ip.checked = cat.value === "Véhicule"; };
+      f.onsubmit = e => {
+        e.preventDefault();
+        const name = $("#a-name", d).value.trim(), date = $("#a-date", d).value, value = parseFloat($("#a-value", d).value);
+        if (!name || !date || isNaN(value)) return;
+        const a = { id: uid(), kind, name, category: cat.value, interp: ip.checked, txs: [], vals: [{ id: uid(), date, value }] };
+        S.assets.push(a); save(); dlg.close(); openAsset(a.id); toast("Ajouté");
+      };
+      setTimeout(() => $("#a-name", d).focus(), 30);
+      return;
+    }
+    // placement coté
+    const q = $("#q", d), results = $("#results", d), chosen = $("#chosen", d), sym = $("#a-symbol", d), name = $("#a-name", d), cat = $("#a-cat", d);
+    const hint = $("#a-hint", d), dateEl = $("#a-date", d), priceEl = $("#a-price", d), qtyEl = $("#a-qty", d);
+    let qt, qseq = 0;
+    const typeToCat = t => ({ CRYPTOCURRENCY: "Crypto", ETF: "ETF", EQUITY: "Action", MUTUALFUND: "Fonds" }[t] || "Autre placement");
+    const choose = (symbol, nm, type, exch) => {
+      sym.value = symbol; if (nm) name.value = nm; if (type) cat.value = typeToCat(type);
+      results.hidden = true;
+      chosen.hidden = false; chosen.innerHTML = `<b>${esc(symbol)}</b><span class="x">${esc(nm || "")}${exch ? " · " + esc(exch) : ""}</span>`;
+      if (dateEl.value) autoRun();
+    };
+    q.oninput = () => {
+      clearTimeout(qt);
+      const v = q.value.trim();
+      if (v.length < 2) { results.hidden = true; return; }
+      qt = setTimeout(async () => {
+        const my = ++qseq;
+        if (!S.workerUrl) { results.hidden = false; results.innerHTML = `<div class="empty">Configure le relais de prix pour la recherche, ou saisis le symbole directement.</div>`; return; }
+        results.hidden = false; results.innerHTML = `<div class="empty">Recherche…</div>`;
+        try {
+          const j = await api("/search?q=" + encodeURIComponent(v));
+          if (my !== qseq) return;
+          const qs = (j.quotes || []).filter(x => x.symbol && x.quoteType !== "OPTION" && x.quoteType !== "FUTURE");
+          if (!qs.length) { results.innerHTML = `<div class="empty">Aucun résultat. Essaie le symbole Yahoo ou l'ISIN.</div>`; return; }
+          results.innerHTML = qs.map((x, i) => `<button type="button" data-i="${i}"><span style="min-width:0"><span class="n">${esc(x.longname || x.shortname || x.symbol)}</span><br><span class="x">${esc(x.symbol)} · ${esc(x.exchDisp || x.exchange || "")}</span></span><span class="x">${esc(x.typeDisp || x.quoteType || "")}</span></button>`).join("");
+          $$("button", results).forEach(b => b.onclick = () => { const x = qs[+b.dataset.i]; choose(x.symbol, x.shortname || x.longname, x.quoteType, x.exchDisp); });
+        } catch (e) { if (my === qseq) results.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+      }, 300);
+    };
+    const autoRun = bindAutoPrice(() => sym.value.trim().toUpperCase(), dateEl, priceEl, hint);
+    sym.addEventListener("change", () => { if (dateEl.value) autoRun(); });
+    f.onsubmit = async e => {
+      e.preventDefault();
+      const symbol = sym.value.trim().toUpperCase(), nm = name.value.trim() || symbol;
+      if (!symbol) return;
+      const date = dateEl.value, qty = parseFloat(qtyEl.value), price = parseFloat(priceEl.value);
+      if (date && !(qty > 0)) { hint.className = "hint err"; hint.textContent = "Indique la quantité achetée, ou vide la date."; return; }
+      if (date && isNaN(price)) { hint.className = "hint err"; hint.textContent = "Prix introuvable : saisis-le à la main."; return; }
+      const a = { id: uid(), kind: "cote", name: nm, symbol, category: cat.value, currency: P[symbol]?.cur || "EUR", txs: [], vals: [] };
+      if (date) a.txs.push({ id: uid(), t: "buy", date, qty, price, fees: 0 });
+      S.assets.push(a); save(); dlg.close(); openAsset(a.id); toast("Ajouté");
+      refreshPrices();
+    };
+    setTimeout(() => q.focus(), 30);
+  });
+}
+
+function openEdit(a) {
+  const isQ = a.kind === "cote";
+  openDialog(`
+    <div class="dlg-head"><h2>Modifier</h2>${closeBtn}</div>
+    <div class="dlg-body">
+      <form id="editform" style="display:flex;flex-direction:column;gap:14px">
+        <label class="f">Nom<input type="text" id="e-name" value="${esc(a.name)}" required></label>
+        <div class="fields">
+          ${isQ ? `<label class="f">Symbole<input type="text" id="e-symbol" value="${esc(a.symbol)}" required></label>` : ""}
+          <label class="f">Catégorie<select id="e-cat">${CATS[a.kind].map(c => `<option ${c === a.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+        </div>
+        ${!isQ ? `<label class="check"><input type="checkbox" id="e-interp" ${a.interp ? "checked" : ""}> Évolution progressive entre deux estimations</label>` : ""}
+        <div class="form-actions">
+          <button class="btn danger" type="button" id="e-del" style="margin-right:auto">Supprimer</button>
+          <button class="btn" type="button" data-close>Annuler</button><button class="btn primary" type="submit">Enregistrer</button>
+        </div>
+      </form>
+    </div>`, d => {
+    const del = $("#e-del", d);
+    del.onclick = () => {
+      if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Confirmer la suppression"; return; }
+      S.assets = S.assets.filter(x => x.id !== a.id); save(); dlg.close(); UI.view = "home"; render(); toast("Élément supprimé");
+    };
+    $("#editform", d).onsubmit = e => {
+      e.preventDefault();
+      a.name = $("#e-name", d).value.trim() || a.name;
+      a.category = $("#e-cat", d).value;
+      if (isQ) { const s = $("#e-symbol", d).value.trim().toUpperCase(); if (s && s !== a.symbol) { a.symbol = s; a.demo = false; } }
+      else a.interp = $("#e-interp", d).checked;
+      save(); dlg.close(); render(); refreshPrices();
+    };
+  });
+}
+
+function openSettings() {
+  openDialog(`
+    <div class="dlg-head"><h2>Réglages</h2>${closeBtn}</div>
+    <div class="dlg-body">
+      <div class="setting">
+        <h3>Relais de prix</h3>
+        <p>L'adresse de ton Cloudflare Worker, par exemple <code>https://prix.tonpseudo.workers.dev</code>. Il sert à chercher les symboles et à récupérer les cours.</p>
+        <div class="row-btns"><input type="url" id="s-url" value="${esc(S.workerUrl)}" placeholder="https://…workers.dev" style="flex:1 1 240px"><button class="btn" type="button" id="s-test">Tester</button><button class="btn primary" type="button" id="s-save">Enregistrer</button></div>
+        <p class="hint" id="s-hint" style="margin-top:6px"></p>
+      </div>
+      <hr class="divider">
+      <div class="setting">
+        <h3>Sauvegarde</h3>
+        <p>Tes données restent dans ce navigateur, sur cet appareil. Exporte-les régulièrement, et importe le fichier pour les retrouver sur un autre appareil.</p>
+        <div class="row-btns">
+          <button class="btn" type="button" id="s-export">Télécharger la sauvegarde</button>
+          <button class="btn" type="button" id="s-copy">Copier</button>
+          <label class="btn" for="s-import" style="cursor:pointer">Importer un fichier</label>
+          <input type="file" id="s-import" accept="application/json,.json" hidden>
+        </div>
+      </div>
+      <hr class="divider">
+      <div class="setting">
+        <h3>Données</h3>
+        <div class="row-btns">
+          <button class="btn" type="button" id="s-refresh">Actualiser les cours</button>
+          <button class="btn" type="button" id="s-demo">Charger les exemples</button>
+          <button class="btn danger" type="button" id="s-reset">Tout effacer</button>
+        </div>
+      </div>
+    </div>`, d => {
+    const url = $("#s-url", d), hint = $("#s-hint", d);
+    $("#s-save", d).onclick = () => { S.workerUrl = url.value.trim().replace(/\/+$/, ""); save(); hint.className = "hint"; hint.textContent = "Adresse enregistrée."; refreshPrices(true); };
+    $("#s-test", d).onclick = async () => {
+      const old = S.workerUrl; S.workerUrl = url.value.trim();
+      hint.className = "hint"; hint.textContent = "Test en cours…";
+      try {
+        const s = await fetchChart("BTC-EUR", addDays(today(), -7));
+        hint.textContent = "Ça marche. Bitcoin vaut " + money(s.c[s.c.length - 1], s.cur) + " (" + fmtDate(s.d[s.d.length - 1]) + ").";
+      } catch (e) { hint.className = "hint err"; hint.textContent = e.message; }
+      S.workerUrl = old;
+    };
+    const dump = () => JSON.stringify({ app: "patrimoine", exportedAt: new Date().toISOString(), data: S }, null, 1);
+    $("#s-export", d).onclick = () => {
+      const blob = new Blob([dump()], { type: "application/json" });
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "patrimoine-" + today() + ".json";
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    };
+    $("#s-copy", d).onclick = () => navigator.clipboard.writeText(dump()).then(() => toast("Sauvegarde copiée"), () => toast("Copie impossible ici, utilise le téléchargement"));
+    $("#s-import", d).onchange = async e => {
+      const file = e.target.files[0]; if (!file) return;
+      try {
+        const j = JSON.parse(await file.text()); const data = j.data || j;
+        if (!Array.isArray(data.assets)) throw new Error();
+        S = data; save(); dlg.close(); UI.view = "home"; render(); refreshPrices(); updateBanner(); toast("Données importées");
+      } catch (err) { toast("Fichier non reconnu"); }
+    };
+    $("#s-refresh", d).onclick = () => { dlg.close(); refreshPrices(true); };
+    $("#s-demo", d).onclick = () => {
+      const keep = S.assets.filter(a => !a.demo);
+      const demo = demoState(); S.assets = [...keep, ...demo.assets]; S.demo = true; save(); dlg.close(); UI.view = "home"; render(); updateBanner();
+    };
+    const reset = $("#s-reset", d);
+    reset.onclick = () => {
+      if (!reset.classList.contains("armed")) { reset.classList.add("armed"); reset.textContent = "Confirmer : tout effacer"; return; }
+      const w = S.workerUrl; S = { v: 1, workerUrl: w, demo: false, assets: [] }; save(); dlg.close(); UI.view = "home"; render(); updateBanner(); toast("Tout a été effacé");
+    };
+  });
+}
+
+/* ================= Navigation & rafraîchissement ================= */
+function openAsset(id) { UI.view = "asset"; UI.assetId = id; UI.mode = "val"; render(); scrollTo(0, 0); }
+function render() { if (UI.view === "asset") renderAsset(); else renderHome(); }
+function updateBanner() { $("#banner").hidden = !S.assets.some(a => a.demo); }
+function setStatus(msg, err) { const s = $("#status"); s.textContent = msg || ""; s.className = "status" + (err ? " err" : ""); s.title = msg || ""; }
+
+let refreshing = false;
+async function refreshPrices(force = false) {
+  if (refreshing) return; refreshing = true;
+  const list = S.assets.filter(a => a.kind === "cote" && a.symbol && !a.symbol.startsWith("EX:") && a.txs.length);
+  if (!list.length) { refreshing = false; setStatus(""); return; }
+  if (!S.workerUrl) { refreshing = false; setStatus("Relais de prix à configurer", true); return; }
+  setStatus("Mise à jour des cours…");
+  const errs = [];
+  await Promise.all(list.map(async a => {
+    try { const s = await ensure(a.symbol, firstDate(a), force); if (s && s.cur && a.currency !== s.cur) { a.currency = s.cur; } }
+    catch (e) { errs.push(a.symbol); }
+  }));
+  save();
+  refreshing = false;
+  CALC = null; render();
+  if (errs.length) setStatus("Cours indisponibles : " + errs.join(", "), true);
+  else setStatus("Cours à jour · " + new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }));
+}
+
+$("#btn-add").onclick = () => openAdd();
+$("#btn-settings").onclick = () => openSettings();
+$("#brand").onclick = () => { UI.view = "home"; render(); scrollTo(0, 0); };
+$("#brand").onkeydown = e => { if (e.key === "Enter") $("#brand").click(); };
+$("#btn-clear-demo").onclick = () => { S.assets = S.assets.filter(a => !a.demo); S.demo = false; save(); UI.view = "home"; render(); updateBanner(); toast("Exemples effacés"); };
+let rT; addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(render, 150); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshPrices(); });
+
+load();
+updateBanner();
+render();
+refreshPrices();
+</script>
+</body>
+</html>
