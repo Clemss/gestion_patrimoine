@@ -1170,6 +1170,25 @@ function openEdit(a) {
   });
 }
 
+// Import additif : ajoute les éléments du fichier sans rien effacer.
+// Un placement coté déjà présent (même symbole) reçoit les opérations manquantes, sans doublon.
+function importAssets(list) {
+  let added = 0;
+  const key = x => [x.t || "", x.date, +(+x.qty || 0).toFixed(10), +(+x.value || 0).toFixed(2)].join("|");
+  for (const inc of list) {
+    if (!inc || !inc.kind) continue;
+    const same = S.assets.find(a => !a.demo && (a.id === inc.id || (inc.kind === "cote" && a.kind === "cote" && a.symbol === inc.symbol) || (inc.kind !== "cote" && a.kind === inc.kind && a.name === inc.name)));
+    if (!same) {
+      const copy = { ...inc, id: S.assets.some(a => a.id === inc.id) ? uid() : inc.id, demo: false, txs: inc.txs || [], vals: inc.vals || [] };
+      S.assets.push(copy); added += copy.txs.length + copy.vals.length; continue;
+    }
+    const have = new Set([...(same.txs || []), ...(same.vals || [])].map(key));
+    for (const t of inc.txs || []) if (!have.has(key(t))) { same.txs.push({ ...t, id: uid() }); added++; }
+    for (const v of inc.vals || []) if (!have.has(key(v))) { same.vals.push({ ...v, id: uid() }); added++; }
+  }
+  return added;
+}
+
 function openSettings() {
   openDialog(`
     <div class="dlg-head"><h2>Réglages</h2>${closeBtn}</div>
@@ -1191,7 +1210,7 @@ function openSettings() {
       <hr class="divider">
       <div class="setting">
         <h3>Sauvegarde</h3>
-        <p>Une copie de tes données sur fichier, par sécurité.${TOKEN ? " Importer un fichier remplace les données sur tous tes appareils." : ""}</p>
+        <p>Une copie de tes données sur fichier, par sécurité. Importer un fichier ajoute son contenu à tes données, sans rien effacer ni créer de doublon.</p>
         <div class="row-btns">
           <button class="btn" type="button" id="s-export">Télécharger la sauvegarde</button>
           <button class="btn" type="button" id="s-copy">Copier</button>
@@ -1240,9 +1259,9 @@ function openSettings() {
       try {
         const j = JSON.parse(await file.text()); const data = j.data || j;
         if (!Array.isArray(data.assets)) throw new Error();
-        const keepIds = new Set(data.assets.map(a => a.id));
-        tomb(...S.assets.filter(a => !keepIds.has(a.id)).map(a => a.id));
-        S.assets = data.assets; S.demo = false; save(); dlg.close(); UI.view = "home"; render(); refreshPrices(); updateBanner(); toast("Données importées");
+        const n = importAssets(data.assets);
+        save(); dlg.close(); UI.view = "home"; render(); refreshPrices(); updateBanner();
+        toast(n ? n + " opération" + (n > 1 ? "s" : "") + " ou estimation" + (n > 1 ? "s" : "") + " ajoutée" + (n > 1 ? "s" : "") : "Rien de nouveau dans ce fichier");
       } catch (err) { toast("Fichier non reconnu"); }
     };
     $("#s-refresh", d).onclick = () => { dlg.close(); refreshPrices(true); };
