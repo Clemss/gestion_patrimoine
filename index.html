@@ -318,7 +318,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 21 h 45";
+const APP_VERSION = "31 oct. 2026 · 21 h 50";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -1046,9 +1046,11 @@ function immoSections(a, credits) {
         <div class="valbox"><div class="val">${eur(cr)}</div><div class="qty">restant dû</div></div></button>`;
     }).join("")}</div>` : `<p class="empty">Aucun crédit lié à ce bien.</p>`}
     ${(() => {
-      const free = S.assets.filter(x => x.kind === "dette" && x.loan && (!x.linkedTo || !S.assets.some(y => y.id === x.linkedTo)));
-      return free.length ? `<div class="form" style="margin-top:10px"><div class="setting"><h3>Crédits non reliés à un bien</h3><p>Relie-les à ce bien pour qu'ils comptent dans ta part nette et le simulateur.</p></div>
-        <div class="list">${free.map(c => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto;cursor:default"><div style="min-width:0"><div class="name">${esc(c.name)}</div><div class="meta">${eur(+c.loan.amount)} à ${num(+c.loan.rate, 3)} %</div></div><button class="btn primary" type="button" data-link="${c.id}">Relier à ce bien</button></div>`).join("")}</div></div>` : "";
+      // tous les crédits (ou dettes) qui ne sont pas reliés à ce bien : orphelins ou reliés à un autre bien
+      const free = S.assets.filter(x => x.kind === "dette" && x.linkedTo !== a.id && (x.loan || /immo/i.test(x.category || "")));
+      const where = c => { const b = c.linkedTo && S.assets.find(y => y.id === c.linkedTo); return b ? "relié à « " + esc(b.name) + " »" : "relié à aucun bien"; };
+      return free.length ? `<div class="form" style="margin-top:10px"><div class="setting"><h3>Autres crédits</h3><p>Relie-les à ce bien pour qu'ils comptent dans ta part nette et le simulateur.</p></div>
+        <div class="list">${free.map(c => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto;cursor:default"><div style="min-width:0"><div class="name">${esc(c.name)}</div><div class="meta" style="white-space:normal">${c.loan ? eur(+c.loan.amount) + " à " + num(+c.loan.rate, 3) + " % · " : ""}${where(c)}</div></div>${c.loan ? `<button class="btn primary" type="button" data-link="${c.id}">Relier à ce bien</button>` : ""}</div>`).join("")}</div></div>` : "";
     })()}
   </section>`;
   const def = Math.round(value / 1000) * 1000 || Math.round(+p.price || 0);
