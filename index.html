@@ -102,6 +102,11 @@ main.wrap { padding-block: 22px 60px; display: flex; flex-direction: column; gap
 .hero { display: flex; flex-direction: column; gap: 4px; }
 .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .big { font: 700 clamp(34px, 7vw, 48px)/1.1 var(--f-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.heads { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 0 -12px; }
+.head { flex: 1 1 260px; min-width: 0; text-align: left; background: none; border: 1px solid transparent; border-radius: 14px; padding: 8px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; color: inherit; }
+.head:hover { background: var(--sunken); }
+.head.on { border-color: var(--line); background: var(--surface); box-shadow: var(--shadow); }
+.big.mid { font-size: clamp(26px, 5vw, 34px); }
 .chg { font-weight: 600; font-size: 15px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .chg .when { color: var(--muted); font-weight: 500; }
 .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--muted); }
@@ -321,7 +326,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 22 h 25";
+const APP_VERSION = "31 oct. 2026 · 22 h 30";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -922,7 +927,30 @@ function renderHome() {
     return;
   }
   const i0 = Math.max(0, daysBetween(C.start, rangeStart(UI.range, C.start)));
-  const dates = C.dates.slice(i0), vals = Array.from(C.total.slice(i0));
+  const dates = C.dates.slice(i0), netVals = Array.from(C.total.slice(i0));
+  // valeur totale des placements cotés, jour par jour
+  const quoted = S.assets.filter(a => a.kind === "cote");
+  const plAll = new Float64Array(C.dates.length);
+  for (const a of quoted) { const v = C.per[a.id].val; for (let i = 0; i < v.length; i++) plAll[i] += v[i]; }
+  const plVals = Array.from(plAll.slice(i0)), plLast = plAll[plAll.length - 1];
+  const plFirst = quoted.map(firstDate).filter(Boolean).sort()[0];
+  // variation des placements hors versements (achats et ventes de la période)
+  const plChange = (v0, v1, d0, d1, when) => {
+    // capital de départ : la valeur au premier jour, sauf si la période commence avant le premier achat
+    const start = !plFirst || d0 <= plFirst ? 0 : v0, lo = start ? d0 : "0000";
+    let f = 0;
+    for (const a of quoted) {
+      const c = assetCur(a);
+      for (const t of a.txs) if (t.date > lo && t.date <= d1) {
+        const amt = t.qty * t.price * (fxAt(c, t.date) ?? 1);
+        f += t.t === "sell" ? -(amt - (+t.fees || 0)) : amt + (+t.fees || 0);
+      }
+    }
+    const dv = v1 - start - f, base = start + Math.max(0, f), k = cls(dv);
+    return `<span class="${k}">${signed(dv)}</span>${base > 0 ? `<span class="pill ${k}">${pct(dv / base * 100)}</span>` : ""}<span class="when">${esc(when)}</span>`;
+  };
+  const showPl = UI.homeChart === "pl" && quoted.length;
+  const vals = showPl ? plVals : netVals;
   const last = C.total[C.total.length - 1];
   const totAssets = C.assets[C.assets.length - 1], totDebts = C.debts[C.debts.length - 1];
   let invested = 0, latentAll = 0;
@@ -953,9 +981,18 @@ function renderHome() {
 
   app.innerHTML = `
   <section class="hero">
-    <div class="eyebrow">Patrimoine net</div>
-    <div class="big" id="big">${eur(last)}</div>
-    <div class="chg" id="chg">${changeLine(vals[0], last, RANGE_WHEN[UI.range])}</div>
+    <div class="heads">
+      <button type="button" class="head ${showPl ? "" : "on"}" data-chart="net">
+        <div class="eyebrow">Patrimoine net</div>
+        <div class="big" id="big">${eur(last)}</div>
+        <div class="chg" id="chg">${changeLine(netVals[0], last, RANGE_WHEN[UI.range])}</div>
+      </button>
+      ${quoted.length ? `<button type="button" class="head ${showPl ? "on" : ""}" data-chart="pl">
+        <div class="eyebrow">Placements</div>
+        <div class="big mid" id="big2">${eur(plLast)}</div>
+        <div class="chg" id="chg2">${plChange(plVals[0], plLast, dates[0], dates[dates.length - 1], RANGE_WHEN[UI.range] + " · hors versements")}</div>
+      </button>` : ""}
+    </div>
     ${rangeButtons()}
     <div class="chart" id="chart"></div>
   </section>
@@ -970,13 +1007,20 @@ function renderHome() {
     <div class="legend">${cats.map(([c, v]) => `<div><i style="background:${CAT_COLOR[c] || "#888"}"></i><b>${esc(c)}</b><span>${(v / catSum * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} % · ${eurAuto(v)}</span></div>`).join("")}</div></section>` : ""}
   ${groups}`;
 
-  const big = $("#big"), chg = $("#chg");
+  const big = $("#big"), chg = $("#chg"), big2 = $("#big2"), chg2 = $("#chg2");
   drawChart($("#chart"), dates, vals, {
-    onHover: (i, ds, vs) => {
-      if (i == null) { big.textContent = eur(last); chg.innerHTML = changeLine(vals[0], last, RANGE_WHEN[UI.range]); }
-      else { big.textContent = eur(vs[i]); chg.innerHTML = changeLine(vs[0], vs[i], "du " + fmtDateShort(ds[0]) + " au " + fmtDate(ds[i])); }
+    onHover: (i, ds) => {
+      if (i == null) {
+        big.textContent = eur(last); chg.innerHTML = changeLine(netVals[0], last, RANGE_WHEN[UI.range]);
+        if (big2) { big2.textContent = eur(plLast); chg2.innerHTML = plChange(plVals[0], plLast, dates[0], dates[dates.length - 1], RANGE_WHEN[UI.range] + " · hors versements"); }
+        return;
+      }
+      const j = dates.indexOf(ds[i]), when = "du " + (dates[0].slice(0, 4) === ds[i].slice(0, 4) ? fmtDateShort(dates[0]) : fmtDate(dates[0])) + " au " + fmtDate(ds[i]);
+      big.textContent = eur(netVals[j]); chg.innerHTML = changeLine(netVals[0], netVals[j], when);
+      if (big2) { big2.textContent = eur(plVals[j]); chg2.innerHTML = plChange(plVals[0], plVals[j], dates[0], ds[i], when); }
     },
   });
+  $$("[data-chart]", app).forEach(b => b.onclick = () => { UI.homeChart = b.dataset.chart; renderHome(); });
   bindRanges(renderHome);
   $$(".row", app).forEach(r => r.onclick = () => openAssetSafe(r.dataset.id));
 }
