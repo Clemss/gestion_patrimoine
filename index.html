@@ -654,14 +654,18 @@ function addMonths(s, m) {
   d.setUTCDate(Math.min(day, last));
   return d.toISOString().slice(0, 10);
 }
+// nombre de mois avant l'amortissement « classique » : différé puis paliers à mensualité fixe
+function loanLead(L) { return (+L.deferral || 0) + (L.steps || []).reduce((t, x) => t + (+x.months || 0), 0); }
+function annuity(A, rate, n) { const r = (+rate || 0) / 1200; n = Math.max(1, n); return r ? A * r / (1 - Math.pow(1 + r, -n)) : A / n; }
+// mensualité hors assurance de la dernière phase (après différé et paliers)
 function loanPayment(L) {
-  // mensualité hors assurance une fois le différé terminé
-  const r = (+L.rate || 0) / 1200, n = Math.max(1, (+L.months || 1) - (+L.deferral || 0));
-  return r ? L.amount * r / (1 - Math.pow(1 + r, -n)) : L.amount / n;
+  if (!loanLead(L)) return annuity(+L.amount, L.rate, +L.months || 1);
+  const rows = loanRows(L);
+  return rows[Math.min(loanLead(L), rows.length - 1)]?.payment ?? 0;
 }
 const LOAN_CACHE = new Map();
-// Tableau d'amortissement : celui de la banque s'il a été saisi (L.rows), sinon calculé
-// (différé éventuel où l'on ne paie que les intérêts, puis mensualités constantes)
+// Tableau d'amortissement : celui de la banque s'il a été saisi (L.rows), sinon calculé :
+// différé éventuel (intérêts seuls), paliers à mensualité fixe, puis mensualités constantes jusqu'au bout
 function loanRows(L) {
   const key = JSON.stringify(L);
   if (LOAN_CACHE.has(key)) return LOAN_CACHE.get(key);
@@ -669,10 +673,17 @@ function loanRows(L) {
   if (Array.isArray(L.rows) && L.rows.length) {
     rows = [...L.rows].sort((x, y) => x.date < y.date ? -1 : 1).map(r => ({ insurance: +L.insurance || 0, ...r }));
   } else {
-    const r = (+L.rate || 0) / 1200, M = loanPayment(L), def = Math.min(+L.deferral || 0, (+L.months || 0) - 1);
-    let rem = +L.amount; rows = [];
-    for (let k = 0; k < (+L.months || 0) && rem > 0.005; k++) {
-      const interest = rem * r, principal = k < def ? 0 : Math.min(rem, M - interest);
+    const r = (+L.rate || 0) / 1200, n = +L.months || 0, def = +L.deferral || 0;
+    const plan = []; // mensualité fixe prévue pour chaque mois (null = intérêts seuls, undefined = annuité)
+    for (let k = 0; k < def; k++) plan.push(null);
+    for (const st of L.steps || []) for (let k = 0; k < (+st.months || 0); k++) plan.push(+st.payment);
+    let rem = +L.amount, M = null; rows = [];
+    for (let k = 0; k < n && rem > 0.005; k++) {
+      const interest = rem * r;
+      let pay;
+      if (k < plan.length && k < n - 1) pay = plan[k] === null ? interest : plan[k];
+      else { if (M === null) M = annuity(rem, L.rate, n - k); pay = M; }
+      const principal = Math.max(0, Math.min(rem, pay - interest));
       rem -= principal;
       rows.push({ date: addMonths(L.start, k), payment: principal + interest, interest, principal, insurance: +L.insurance || 0, remaining: Math.max(0, rem), deferred: k < def });
     }
@@ -965,12 +976,12 @@ function loanSections(a) {
   const bien = linkedBien(a);
   const repaidPct = L.amount ? (L.amount - crd) / L.amount * 100 : 0;
   const stats = `<section class="stats six">
-    <div class="stat"><div class="k">Mensualité ce mois-ci</div><div class="v">${eur(loanMonthly(L))}</div><div class="s flat">${L.deferral && rows[L.deferral] && rows[L.deferral].date > t ? "différé jusqu'en " + fmtMonth(rows[L.deferral - 1].date) + ", puis " + eur(loanPayment(L) + ins) : ins ? "dont assurance " + eur(ins) : "hors assurance"}</div></div>
+    <div class="stat"><div class="k">Mensualité ce mois-ci</div><div class="v">${eur(loanMonthly(L))}</div><div class="s flat">${(() => { const ld = loanLead(L); return ld && rows[ld] && rows[ld].date > t ? (L.steps ? "palier" : "différé") + " jusqu'en " + fmtMonth(rows[ld - 1].date) + ", puis " + eur(loanPayment(L) + ins) : ins ? "dont assurance " + eur(ins) : "hors assurance"; })()}</div></div>
     <div class="stat"><div class="k">Capital restant dû</div><div class="v">${eur(crd)}</div><div class="s flat">${num(repaidPct, 1)} % remboursé</div></div>
     <div class="stat"><div class="k">Capital remboursé</div><div class="v">${eur(L.amount - crd)}</div><div class="s flat">${paid.n} échéance${paid.n > 1 ? "s" : ""} sur ${rows.length}</div></div>
     <div class="stat"><div class="k">Intérêts payés à ce jour</div><div class="v">${eur(paid.interest)}</div><div class="s flat">${paid.insurance ? "+ " + eur(paid.insurance) + " d'assurance" : ""}</div></div>
     <div class="stat"><div class="k">Coût total du crédit</div><div class="v">${eur(totInt + totIns)}</div><div class="s flat">intérêts ${eur(totInt)}${totIns ? " + assurance" : ""}</div></div>
-    <div class="stat"><div class="k">Fin du crédit</div><div class="v">${end ? fmtMonth(end) : "—"}</div><div class="s flat">${L.rows?.length ? "tableau de la banque" : num(+L.rate, 3) + " % sur " + num(L.months / 12, 1) + " ans" + (L.deferral ? ", différé " + L.deferral + " mois" : "")}</div></div>
+    <div class="stat"><div class="k">Fin du crédit</div><div class="v">${end ? fmtMonth(end) : "—"}</div><div class="s flat">${L.rows?.length ? "tableau de la banque" : num(+L.rate, 3) + " % sur " + num(L.months / 12, 1) + " ans" + (L.deferral ? ", différé " + L.deferral + " mois" : "") + (L.steps ? ", avec palier" : "")}</div></div>
   </section>`;
   const byYear = new Map();
   for (const r of rows) {
@@ -1263,7 +1274,9 @@ function loanFieldsHtml(L = {}, pfx = "ln", name = null) {
     <label class="f">1re mensualité le<input type="date" id="${pfx}-start" value="${L.start || ""}"></label>
     <label class="f">Différé (mois)<input type="number" id="${pfx}-def" step="1" min="0" inputmode="numeric" value="${L.deferral || ""}" placeholder="0 si aucun"></label>
     <label class="f">Assurance (€ par mois)<input type="number" id="${pfx}-ins" step="any" min="0" inputmode="decimal" value="${L.insurance ?? ""}" placeholder="0"></label>
-  </div><span class="hint" id="${pfx}-hint">Ces chiffres sont sur ton offre de prêt ou ton tableau d'amortissement. Différé : nombre de mois au début pendant lesquels tu ne rembourses pas de capital (fréquent pour un PTZ).</span>`;
+    <label class="f">Palier : mensualité (€ hors assur.)<input type="number" id="${pfx}-p1" step="any" min="0" inputmode="decimal" value="${L.steps?.[0]?.payment ?? ""}" placeholder="facultatif"></label>
+    <label class="f">Palier : durée (mois)<input type="number" id="${pfx}-p1m" step="1" min="0" inputmode="numeric" value="${L.steps?.[0]?.months ?? ""}" placeholder="ex. 120"></label>
+  </div><span class="hint" id="${pfx}-hint">Ces chiffres sont sur ton offre de prêt ou ton tableau d'amortissement. Différé : mois du début sans remboursement de capital (PTZ). Palier : si ta mensualité augmente plus tard (prêts lissés), indique la mensualité du début et sa durée.</span>`;
 }
 function readLoan(d, pfx = "ln") {
   const v = id => $(`#${pfx}-${id}`, d)?.value;
@@ -1273,6 +1286,8 @@ function readLoan(d, pfx = "ln") {
   if (!(amount > 0 && months > 0 && start)) return null;
   const L = { amount, rate, months, start, insurance };
   if (deferral) L.deferral = Math.min(deferral, months - 1);
+  const p1 = parseFloat(v("p1")), p1m = Math.round(parseFloat(v("p1m")) || 0);
+  if (p1 > 0 && p1m > 0) L.steps = [{ payment: p1, months: p1m }];
   return L;
 }
 function bindLoanPreview(d, pfx = "ln") {
@@ -1282,10 +1297,10 @@ function bindLoanPreview(d, pfx = "ln") {
     const rows = loanRows(L), totInt = rows.reduce((s, r) => s + r.interest, 0);
     const M = loanPayment(L);
     h.className = "hint";
-    h.textContent = (L.deferral ? `Pendant le différé : ${eur(rows[0].payment + L.insurance)}/mois, puis ` : "Mensualité calculée : ") +
+    h.textContent = (L.deferral ? `Pendant le différé : ${eur(rows[0].payment + L.insurance)}/mois, puis ` : "") + (L.steps ? `Palier : ${eur(L.steps[0].payment)} pendant ${L.steps[0].months} mois, puis ` : (L.deferral ? "" : "Mensualité calculée : ")) +
       `${eur(M)} hors assurance${L.insurance ? " (" + eur(M + L.insurance) + " avec)" : ""} · intérêts totaux ${eur(totInt)} · fin ${fmtMonth(rows[rows.length - 1].date)}. Compare avec ton tableau d'amortissement.`;
   };
-  ["amount", "rate", "years", "start", "def", "ins"].forEach(id => $(`#${pfx}-${id}`, d)?.addEventListener("input", run));
+  ["amount", "rate", "years", "start", "def", "ins", "p1", "p1m"].forEach(id => $(`#${pfx}-${id}`, d)?.addEventListener("input", run));
   run();
 }
 function openLoanDialog(bien) {
@@ -1524,7 +1539,7 @@ function openEdit(a) {
       if (isLoan) {
         const L = readLoan(d);
         if (!L) { $("#e-hint", d).textContent = "Complète le montant, la durée et la date de 1re mensualité."; return; }
-        a.loan = { ...a.loan, ...L }; if (!L.deferral) delete a.loan.deferral;
+        a.loan = { ...a.loan, ...L }; if (!L.deferral) delete a.loan.deferral; if (!L.steps) delete a.loan.steps;
       }
       if (isImmoBien) {
         const date = $("#pu-date", d).value, price = parseFloat($("#pu-price", d).value), fees = parseFloat($("#pu-fees", d).value) || 0, g = parseFloat($("#pu-growth", d).value);
