@@ -1,17 +1,22 @@
-// Relais de prix pour l'appli Patrimoine — Cloudflare Worker (gratuit)
-// Il interroge Yahoo Finance côté serveur et renvoie la réponse avec les en-têtes CORS,
-// pour que l'appli web puisse récupérer cours et historiques.
+// Worker de l'appli Patrimoine — Cloudflare Workers (gratuit)
 //
-// Routes :
-//   /chart?symbol=BTC-EUR&from=<unix>&to=<unix>   historique quotidien
-//   /search?q=bitcoin                              recherche de symboles
+// 1) Relais de prix : interroge Yahoo Finance côté serveur et renvoie la réponse avec CORS.
+//      GET /chart?symbol=BTC-EUR&from=<unix>&to=<unix>   historique quotidien
+//      GET /search?q=bitcoin                              recherche de symboles
+//    Seuls ces deux appels Yahoo sont relayés (ce n'est pas un proxy ouvert).
 //
-// Seuls ces deux appels Yahoo sont relayés (ce n'est pas un proxy ouvert).
+// 2) Synchronisation des données entre appareils, protégée par mot de passe :
+//      GET  /data    lit les données          (en-tête Authorization: Bearer <mot de passe>)
+//      PUT  /data    enregistre les données   (corps : { data, baseRev })
+//    Configuration Cloudflare nécessaire :
+//      - un espace KV lié au worker sous le nom  DATA
+//      - un secret nommé                          SYNC_TOKEN  (ton mot de passe)
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "*",
+  "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type",
+  "Access-Control-Max-Age": "86400",
 };
 
 const UA =
@@ -20,16 +25,63 @@ const UA =
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...CORS, "Content-Type": "application/json; charset=utf-8" },
+    headers: { ...CORS, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
   });
+}
+
+// comparaison en temps constant pour ne pas révéler le mot de passe par le chronométrage
+async function sameSecret(a, b) {
+  const enc = new TextEncoder();
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const x = new Uint8Array(ha), y = new Uint8Array(hb);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
+  return diff === 0;
+}
+
+async function handleData(request, env) {
+  if (!env.DATA || !env.SYNC_TOKEN) {
+    return json({ error: "Synchronisation non configurée sur le worker (espace KV « DATA » ou secret « SYNC_TOKEN » manquant)" }, 501);
+  }
+  const auth = request.headers.get("Authorization") || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  if (!token || !(await sameSecret(token, env.SYNC_TOKEN))) {
+    await new Promise(r => setTimeout(r, 400)); // freine les essais en rafale
+    return json({ error: "Mot de passe incorrect" }, 401);
+  }
+
+  const stored = (await env.DATA.get("patrimoine", "json")) || { rev: 0, updatedAt: null, data: null };
+
+  if (request.method === "GET") return json(stored);
+
+  if (request.method === "PUT") {
+    let body;
+    try { body = await request.json(); } catch (e) { return json({ error: "Corps invalide" }, 400); }
+    if (!body || typeof body.data !== "object" || !Array.isArray(body.data.assets)) return json({ error: "Données invalides" }, 400);
+    if ((body.baseRev | 0) !== stored.rev) return json({ error: "conflict", ...stored }, 409);
+    const next = { rev: stored.rev + 1, updatedAt: new Date().toISOString(), data: body.data };
+    // au premier enregistrement de la journée, garde une copie de la veille (30 jours) en cas de fausse manipulation
+    if (stored.data && stored.updatedAt && stored.updatedAt.slice(0, 10) !== next.updatedAt.slice(0, 10)) {
+      await env.DATA.put("backup:" + stored.updatedAt.slice(0, 10), JSON.stringify(stored), { expirationTtl: 30 * 86400 });
+    }
+    await env.DATA.put("patrimoine", JSON.stringify(next));
+    return json({ rev: next.rev, updatedAt: next.updatedAt });
+  }
+
+  return json({ error: "Méthode non autorisée" }, 405);
 }
 
 export default {
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
-    if (request.method !== "GET") return json({ error: "Méthode non autorisée" }, 405);
 
     const url = new URL(request.url);
+    if (url.pathname === "/data") return handleData(request, env);
+    if (request.method !== "GET") return json({ error: "Méthode non autorisée" }, 405);
+
     let target;
     let ttl = 900; // 15 min
 
@@ -52,7 +104,7 @@ export default {
         `&quotesCount=10&newsCount=0&listsCount=0&lang=fr-FR&region=FR`;
       ttl = 86400;
     } else {
-      return json({ ok: true, service: "relais-prix-patrimoine", routes: ["/chart", "/search"] });
+      return json({ ok: true, service: "relais-prix-patrimoine", routes: ["/chart", "/search", "/data"] });
     }
 
     const cache = caches.default;

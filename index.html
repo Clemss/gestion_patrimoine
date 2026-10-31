@@ -320,13 +320,21 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
+const TKEY = "patrimoine.motdepasse";
+let TOKEN = null;
 function load() {
   try { S = JSON.parse(localStorage.getItem(KEY)); } catch (e) { S = null; }
   try { P = JSON.parse(localStorage.getItem(PKEY)) || {}; } catch (e) { P = {}; }
+  try { TOKEN = localStorage.getItem(TKEY) || null; } catch (e) { TOKEN = null; }
   if (!S || !Array.isArray(S.assets)) S = demoState();
   S.workerUrl = cleanUrl(S.workerUrl) || DEFAULT_WORKER;
+  S.rev = S.rev | 0; S.deleted = S.deleted || [];
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast("Sauvegarde impossible sur cet appareil"); } CALC = null; }
+// enregistre sur l'appareil sans déclencher de synchronisation
+function persist() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast("Sauvegarde impossible sur cet appareil"); } CALC = null; }
+// enregistre une modification de l'utilisateur et l'envoie au cloud
+function save() { S.dirty = true; persist(); schedulePush(); }
+function tomb(...ids) { S.deleted = [...(S.deleted || []), ...ids].slice(-2000); }
 function saveP() { try { localStorage.setItem(PKEY, JSON.stringify(P)); } catch (e) { /* cache plein : on ignore */ } }
 
 /* ================= Cours fictifs pour l'exemple ================= */
@@ -461,6 +469,103 @@ function fxAt(cur, date) {
   return lookup(s, date) ?? s.c[0];
 }
 function assetCur(a) { return getSeries(a.symbol)?.cur || a.currency || "EUR"; }
+
+/* ================= Synchronisation entre appareils ================= */
+function byId(arr) { const m = new Map(); for (const x of arr || []) m.set(x.id, x); return m; }
+function mergeList(l, r, del) { const m = byId(r); for (const x of l || []) m.set(x.id, x); return [...m.values()].filter(x => !del.has(x.id)); }
+// fusionne les données locales (prioritaires) avec celles du cloud, sans perdre d'ajout ni ressusciter de suppression
+function mergeData(local, remote) {
+  remote = remote || { assets: [] };
+  const del = new Set([...(remote.deleted || []), ...(local.deleted || [])]);
+  const L = byId(local.assets), R = byId(remote.assets), out = [];
+  for (const id of new Set([...R.keys(), ...L.keys()])) {
+    if (del.has(id)) continue;
+    const l = L.get(id), r = R.get(id);
+    if (!l || !r) { out.push(l || r); continue; }
+    out.push({ ...r, ...l, txs: mergeList(l.txs, r.txs, del), vals: mergeList(l.vals, r.vals, del) });
+  }
+  return { assets: out, deleted: [...del].slice(-2000) };
+}
+async function dataApi(method, body) {
+  let r;
+  try {
+    r = await fetch(cleanUrl(S.workerUrl) + "/data", {
+      method, headers: { Authorization: "Bearer " + TOKEN, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined, cache: "no-store",
+    });
+  } catch (e) { const err = new Error("Hors ligne"); err.offline = true; throw err; }
+  let j = null; try { j = await r.json(); } catch (e) {}
+  return { status: r.status, j };
+}
+let syncing = false, syncAgain = false, pushT = null, SYNC_MSG = "", SYNC_ERR = false;
+function setSync(msg, err) { SYNC_MSG = msg; SYNC_ERR = !!err; paintStatus(); }
+function schedulePush() {
+  if (!TOKEN) return;
+  clearTimeout(pushT); setSync("Enregistrement…");
+  pushT = setTimeout(sync, 1200);
+}
+function adopt(remote) {
+  S.assets = remote.data?.assets || []; S.deleted = remote.data?.deleted || []; S.rev = remote.rev | 0; S.dirty = false;
+}
+async function pushNow(tries = 0) {
+  const p = await dataApi("PUT", { data: { assets: S.assets, deleted: S.deleted }, baseRev: S.rev });
+  if (p.status === 200) { S.rev = p.j.rev; S.dirty = false; persist(); return; }
+  if (p.status === 409 && tries < 3) { const m = mergeData(S, p.j.data); S.assets = m.assets; S.deleted = m.deleted; S.rev = p.j.rev; persist(); return pushNow(tries + 1); }
+  if (p.status === 401) { authFailed(); throw new Error("auth"); }
+  throw new Error(p.j?.error || "Erreur " + p.status);
+}
+async function sync() {
+  if (!TOKEN) return;
+  if (syncing) { syncAgain = true; return; }
+  syncing = true;
+  const before = JSON.stringify(S.assets);
+  try {
+    const g = await dataApi("GET");
+    if (g.status === 401) { authFailed(); return; }
+    if (g.status !== 200) throw new Error(g.j?.error || "Erreur " + g.status);
+    const remote = g.j;
+    if (S.dirty) {
+      if (remote.rev !== S.rev) { const m = mergeData(S, remote.data); S.assets = m.assets; S.deleted = m.deleted; S.rev = remote.rev; }
+      await pushNow();
+    } else if (remote.rev !== S.rev) {
+      adopt(remote); persist();
+    }
+    setSync("Synchronisé · " + new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }));
+    if (JSON.stringify(S.assets) !== before) { CALC = null; render(); updateBanner(); refreshPrices(); }
+  } catch (e) {
+    if (e.message !== "auth") setSync(e.offline ? "Hors ligne · modifs gardées sur l'appareil" : "Synchro : " + e.message, true);
+  } finally {
+    syncing = false;
+    if (syncAgain) { syncAgain = false; sync(); }
+  }
+}
+function authFailed() {
+  TOKEN = null; try { localStorage.removeItem(TKEY); } catch (e) {}
+  UI.guest = false; UI.loginMsg = "Le mot de passe n'est plus valide. Reconnecte-toi.";
+  setSync(""); UI.view = "home"; render();
+}
+async function login(pass) {
+  TOKEN = pass;
+  const g = await dataApi("GET").catch(e => { TOKEN = null; throw new Error("Relais injoignable, vérifie ta connexion"); });
+  if (g.status !== 200) { TOKEN = null; throw new Error(g.status === 401 ? "Mot de passe incorrect" : (g.j?.error || "Erreur " + g.status)); }
+  try { localStorage.setItem(TKEY, pass); } catch (e) {}
+  // les éléments déjà saisis sur cet appareil (hors exemples) rejoignent le cloud
+  const mine = S.assets.filter(a => !a.demo);
+  const remote = g.j;
+  if (mine.length) {
+    const m = mergeData({ assets: mine, deleted: S.deleted }, remote.data);
+    S.assets = m.assets; S.deleted = m.deleted; S.rev = remote.rev | 0; S.dirty = true;
+  } else adopt(remote);
+  S.demo = false; persist(); UI.guest = false; UI.view = "home";
+  render(); updateBanner(); refreshPrices();
+  if (S.dirty) sync(); else setSync("Synchronisé");
+}
+function logout() {
+  clearTimeout(pushT);
+  TOKEN = null; try { localStorage.removeItem(TKEY); } catch (e) {}
+  const w = S.workerUrl; S = demoState(); S.workerUrl = w; S.rev = 0; S.deleted = []; persist();
+  UI.guest = false; UI.view = "home"; setSync(""); render(); updateBanner();
+}
 
 /* ================= Calculs ================= */
 let CALC = null;
@@ -847,6 +952,7 @@ function renderAsset() {
   $("#edit").onclick = () => openEdit(a);
   $$(".seg button", app).forEach(b => b.onclick = () => { UI.mode = b.dataset.mode; renderAsset(); });
   armDeletes(app, id => {
+    tomb(id);
     if (isQ) a.txs = a.txs.filter(t => t.id !== id); else a.vals = a.vals.filter(v => v.id !== id);
     save(); renderAsset(); toast("Supprimé");
   });
@@ -1051,7 +1157,7 @@ function openEdit(a) {
     const del = $("#e-del", d);
     del.onclick = () => {
       if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Confirmer la suppression"; return; }
-      S.assets = S.assets.filter(x => x.id !== a.id); save(); dlg.close(); UI.view = "home"; render(); toast("Élément supprimé");
+      tomb(a.id); S.assets = S.assets.filter(x => x.id !== a.id); save(); dlg.close(); UI.view = "home"; render(); toast("Élément supprimé");
     };
     $("#editform", d).onsubmit = e => {
       e.preventDefault();
@@ -1069,6 +1175,14 @@ function openSettings() {
     <div class="dlg-head"><h2>Réglages</h2>${closeBtn}</div>
     <div class="dlg-body">
       <div class="setting">
+        <h3>Compte</h3>
+        ${TOKEN ? `<p>Connecté. Tes données sont synchronisées entre tous les appareils où tu te connectes avec ce mot de passe. ${esc(SYNC_MSG)}</p>
+        <div class="row-btns"><button class="btn" type="button" id="s-sync">Synchroniser maintenant</button><button class="btn danger" type="button" id="s-logout">Se déconnecter de cet appareil</button></div>`
+        : `<p>Non connecté : les données de cet appareil ne sont pas synchronisées.</p>
+        <div class="row-btns"><button class="btn primary" type="button" id="s-login">Se connecter</button></div>`}
+      </div>
+      <hr class="divider">
+      <div class="setting">
         <h3>Relais de prix</h3>
         <p>L'adresse de ton Cloudflare Worker, par exemple <code>https://prix.tonpseudo.workers.dev</code>. Il sert à chercher les symboles et à récupérer les cours.</p>
         <div class="row-btns"><input type="url" id="s-url" value="${esc(S.workerUrl)}" placeholder="https://…workers.dev" style="flex:1 1 240px"><button class="btn" type="button" id="s-test">Tester</button><button class="btn primary" type="button" id="s-save">Enregistrer</button></div>
@@ -1077,7 +1191,7 @@ function openSettings() {
       <hr class="divider">
       <div class="setting">
         <h3>Sauvegarde</h3>
-        <p>Tes données restent dans ce navigateur, sur cet appareil. Exporte-les régulièrement, et importe le fichier pour les retrouver sur un autre appareil.</p>
+        <p>Une copie de tes données sur fichier, par sécurité.${TOKEN ? " Importer un fichier remplace les données sur tous tes appareils." : ""}</p>
         <div class="row-btns">
           <button class="btn" type="button" id="s-export">Télécharger la sauvegarde</button>
           <button class="btn" type="button" id="s-copy">Copier</button>
@@ -1090,13 +1204,21 @@ function openSettings() {
         <h3>Données</h3>
         <div class="row-btns">
           <button class="btn" type="button" id="s-refresh">Actualiser les cours</button>
-          <button class="btn" type="button" id="s-demo">Charger les exemples</button>
+          ${TOKEN ? "" : `<button class="btn" type="button" id="s-demo">Charger les exemples</button>`}
           <button class="btn danger" type="button" id="s-reset">Tout effacer</button>
         </div>
       </div>
     </div>`, d => {
     const url = $("#s-url", d), hint = $("#s-hint", d);
-    $("#s-save", d).onclick = () => { S.workerUrl = cleanUrl(url.value) || DEFAULT_WORKER; url.value = S.workerUrl; save(); hint.className = "hint"; hint.textContent = "Adresse enregistrée."; refreshPrices(true); };
+    if (TOKEN) {
+      $("#s-sync", d).onclick = () => { dlg.close(); sync(); };
+      const lo = $("#s-logout", d);
+      lo.onclick = () => {
+        if (!lo.classList.contains("armed")) { lo.classList.add("armed"); lo.textContent = S.dirty ? "Modifs non envoyées : confirmer ?" : "Confirmer la déconnexion"; return; }
+        dlg.close(); logout(); toast("Déconnecté de cet appareil");
+      };
+    } else $("#s-login", d).onclick = () => { dlg.close(); UI.guest = false; UI.loginMsg = ""; render(); };
+    $("#s-save", d).onclick = () => { S.workerUrl = cleanUrl(url.value) || DEFAULT_WORKER; url.value = S.workerUrl; persist(); hint.className = "hint"; hint.textContent = "Adresse enregistrée."; refreshPrices(true); };
     $("#s-test", d).onclick = async () => {
       const old = S.workerUrl; S.workerUrl = url.value.trim();
       hint.className = "hint"; hint.textContent = "Test en cours…";
@@ -1106,7 +1228,7 @@ function openSettings() {
       } catch (e) { hint.className = "hint err"; hint.textContent = e.message; }
       S.workerUrl = old;
     };
-    const dump = () => JSON.stringify({ app: "patrimoine", exportedAt: new Date().toISOString(), data: S }, null, 1);
+    const dump = () => JSON.stringify({ app: "patrimoine", exportedAt: new Date().toISOString(), data: { assets: S.assets } }, null, 1);
     $("#s-export", d).onclick = () => {
       const blob = new Blob([dump()], { type: "application/json" });
       const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "patrimoine-" + today() + ".json";
@@ -1118,27 +1240,67 @@ function openSettings() {
       try {
         const j = JSON.parse(await file.text()); const data = j.data || j;
         if (!Array.isArray(data.assets)) throw new Error();
-        S = data; save(); dlg.close(); UI.view = "home"; render(); refreshPrices(); updateBanner(); toast("Données importées");
+        const keepIds = new Set(data.assets.map(a => a.id));
+        tomb(...S.assets.filter(a => !keepIds.has(a.id)).map(a => a.id));
+        S.assets = data.assets; S.demo = false; save(); dlg.close(); UI.view = "home"; render(); refreshPrices(); updateBanner(); toast("Données importées");
       } catch (err) { toast("Fichier non reconnu"); }
     };
     $("#s-refresh", d).onclick = () => { dlg.close(); refreshPrices(true); };
-    $("#s-demo", d).onclick = () => {
+    if (!TOKEN) $("#s-demo", d).onclick = () => {
       const keep = S.assets.filter(a => !a.demo);
       const demo = demoState(); S.assets = [...keep, ...demo.assets]; S.demo = true; save(); dlg.close(); UI.view = "home"; render(); updateBanner();
     };
     const reset = $("#s-reset", d);
     reset.onclick = () => {
       if (!reset.classList.contains("armed")) { reset.classList.add("armed"); reset.textContent = "Confirmer : tout effacer"; return; }
-      const w = S.workerUrl; S = { v: 1, workerUrl: w, demo: false, assets: [] }; save(); dlg.close(); UI.view = "home"; render(); updateBanner(); toast("Tout a été effacé");
+      tomb(...S.assets.map(a => a.id)); S.assets = []; S.demo = false; save(); dlg.close(); UI.view = "home"; render(); updateBanner(); toast("Tout a été effacé");
     };
   });
 }
 
 /* ================= Navigation & rafraîchissement ================= */
 function openAsset(id) { UI.view = "asset"; UI.assetId = id; UI.mode = "val"; render(); scrollTo(0, 0); }
-function render() { if (UI.view === "asset") renderAsset(); else renderHome(); }
-function updateBanner() { $("#banner").hidden = !S.assets.some(a => a.demo); }
-function setStatus(msg, err) { const s = $("#status"); s.textContent = msg || ""; s.className = "status" + (err ? " err" : ""); s.title = msg || ""; }
+function needsLogin() { return !TOKEN && !UI.guest; }
+function render() {
+  const lock = needsLogin();
+  $("#btn-add").hidden = lock;
+  updateBanner();
+  if (lock) return renderLogin();
+  if (UI.view === "asset") renderAsset(); else renderHome();
+}
+function renderLogin() {
+  $("#app").innerHTML = `
+    <section class="form login" style="max-width:440px;margin:6vh auto 0;width:100%">
+      <h2 style="font-size:24px">Connexion</h2>
+      <p class="hint" style="font-size:14px;margin:0">Entre ton mot de passe pour retrouver ton patrimoine, synchronisé sur tous tes appareils.</p>
+      <form id="loginform" style="display:flex;flex-direction:column;gap:12px" autocomplete="on">
+        <input type="text" name="username" value="patrimoine" autocomplete="username" hidden>
+        <label class="f">Mot de passe<input type="password" id="l-pass" autocomplete="current-password" required></label>
+        <div class="form-actions"><span class="hint ${UI.loginMsg ? "err" : ""}" id="l-hint">${esc(UI.loginMsg || "")}</span><button class="btn primary" type="submit" id="l-btn">Se connecter</button></div>
+      </form>
+      <hr class="divider">
+      <button class="btn ghost" type="button" id="l-demo" style="align-self:flex-start;margin-left:-10px">Voir l'appli avec des données d'exemple</button>
+    </section>`;
+  const f = $("#loginform"), hint = $("#l-hint"), btn = $("#l-btn");
+  f.onsubmit = async e => {
+    e.preventDefault();
+    btn.disabled = true; hint.className = "hint"; hint.textContent = "Connexion…";
+    try { UI.loginMsg = ""; await login($("#l-pass").value); toast("Connecté"); }
+    catch (err) { hint.className = "hint err"; hint.textContent = err.message; btn.disabled = false; }
+  };
+  $("#l-demo").onclick = () => { UI.guest = true; if (!S.assets.length) { const w = S.workerUrl; S = { ...demoState(), workerUrl: w, rev: 0, deleted: [] }; persist(); } render(); };
+  setTimeout(() => $("#l-pass")?.focus(), 30);
+}
+function updateBanner() { $("#banner").hidden = needsLogin() || !S.assets.some(a => a.demo); }
+let PRICE_MSG = "", PRICE_ERR = false;
+function setStatus(msg, err) { PRICE_MSG = msg || ""; PRICE_ERR = !!err; paintStatus(); }
+function paintStatus() {
+  const s = $("#status");
+  const parts = [SYNC_MSG, PRICE_MSG].filter(Boolean);
+  const msg = needsLogin() ? "" : parts.join(" · ");
+  s.textContent = msg; s.title = msg;
+  s.className = "status" + (SYNC_ERR || PRICE_ERR ? " err" : "");
+}
 
 let refreshing = false;
 async function refreshPrices(force = false) {
@@ -1148,11 +1310,12 @@ async function refreshPrices(force = false) {
   if (!S.workerUrl) { refreshing = false; setStatus("Relais de prix à configurer", true); return; }
   setStatus("Mise à jour des cours…");
   const errs = [];
+  let changed = false;
   await Promise.all(list.map(async a => {
-    try { const s = await ensure(a.symbol, firstDate(a), force); if (s && s.cur && a.currency !== s.cur) { a.currency = s.cur; } }
+    try { const s = await ensure(a.symbol, firstDate(a), force); if (s && s.cur && a.currency !== s.cur) { a.currency = s.cur; changed = true; } }
     catch (e) { errs.push(a.symbol); }
   }));
-  save();
+  if (changed) save(); else CALC = null;
   refreshing = false;
   CALC = null; render();
   if (errs.length) setStatus("Cours indisponibles : " + errs.join(", "), true);
@@ -1163,14 +1326,15 @@ $("#btn-add").onclick = () => openAdd();
 $("#btn-settings").onclick = () => openSettings();
 $("#brand").onclick = () => { UI.view = "home"; render(); scrollTo(0, 0); };
 $("#brand").onkeydown = e => { if (e.key === "Enter") $("#brand").click(); };
-$("#btn-clear-demo").onclick = () => { S.assets = S.assets.filter(a => !a.demo); S.demo = false; save(); UI.view = "home"; render(); updateBanner(); toast("Exemples effacés"); };
+$("#btn-clear-demo").onclick = () => { tomb(...S.assets.filter(a => a.demo).map(a => a.id)); S.assets = S.assets.filter(a => !a.demo); S.demo = false; save(); UI.view = "home"; render(); updateBanner(); toast("Exemples effacés"); };
 let rT; addEventListener("resize", () => { clearTimeout(rT); rT = setTimeout(render, 150); });
-document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshPrices(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) { sync(); refreshPrices(); } });
+addEventListener("online", () => sync());
 
 load();
-updateBanner();
 render();
 refreshPrices();
+sync();
 </script>
 </body>
 </html>
