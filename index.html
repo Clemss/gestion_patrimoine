@@ -179,6 +179,9 @@ h2 { font: 700 18px/1.2 var(--f-display); margin: 0; letter-spacing: -.01em; tex
   .row .valbox { grid-row: 1 / span 2; align-self: center; }
 }
 .empty { padding: 22px 16px; color: var(--muted); font-size: 14px; }
+.cat-group { display: flex; flex-direction: column; gap: 6px; }
+.cat-head { display: flex; justify-content: space-between; gap: 12px; padding: 8px 4px 0; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.cat-head span:last-child { letter-spacing: 0; text-transform: none; font-size: 13px; }
 
 /* Vue actif */
 .back { align-self: flex-start; margin-left: -10px; }
@@ -307,7 +310,7 @@ function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = fal
 /* ================= Catégories ================= */
 const CATS = {
   cote: ["ETF", "Action", "Crypto", "Fonds", "Autre placement"],
-  bien: ["Immobilier", "Véhicule", "Épargne / liquidités", "Objet de valeur", "Autre bien"],
+  bien: ["Véhicule", "Immobilier", "Épargne / liquidités", "Objet de valeur", "Autre bien"],
   dette: ["Crédit immobilier", "Crédit auto / conso", "Autre dette"],
 };
 const CAT_COLOR = {
@@ -318,7 +321,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 21 h 50";
+const APP_VERSION = "31 oct. 2026 · 22 h 00";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -915,8 +918,16 @@ function renderHome() {
     const list = S.assets.filter(a => a.kind === kind);
     if (!list.length) return "";
     const sum = list.reduce((s, a) => s + C.per[a.id].val[C.dates.length - 1], 0);
-    const rows = list.map(a => rowHtml(a, C, pos[a.id])).join("");
-    return `<section><div class="sec-head"><h2>${KIND_LABEL[kind]}</h2><span class="sum">${eur(sum)}</span></div><div class="list">${rows}</div></section>`;
+    // regroupé par catégorie (ordre des catégories), puis par valeur décroissante
+    const last = x => Math.abs(C.per[x.id].val[C.dates.length - 1]);
+    const order = c => { const i = CATS[kind].indexOf(c); return i < 0 ? 99 : i; };
+    const cats = [...new Set(list.map(a => a.category))].sort((x, y) => order(x) - order(y) || x.localeCompare(y));
+    const blocks = cats.map(c => {
+      const items = list.filter(a => a.category === c).sort((x, y) => last(y) - last(x));
+      const sub = items.reduce((t, a) => t + C.per[a.id].val[C.dates.length - 1], 0);
+      return `<div class="cat-head"><span>${esc(c)}</span><span>${eur(sub)}</span></div><div class="list">${items.map(a => rowHtml(a, C, pos[a.id])).join("")}</div>`;
+    }).join("");
+    return `<section><div class="sec-head"><h2>${KIND_LABEL[kind]}</h2><span class="sum">${eur(sum)}</span></div><div class="cat-group">${blocks}</div></section>`;
   }).join("");
 
   app.innerHTML = `
