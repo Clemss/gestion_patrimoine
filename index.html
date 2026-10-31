@@ -322,11 +322,11 @@ const CAT_COLOR = {
   "ETF": "#4b55d6", "Action": "#2f8fd8", "Crypto": "#e08a1e", "Fonds": "#7a5bd0", "Autre placement": "#5f7da8",
   "Immobilier": "#1f9a86", "Véhicule": "#b8578f", "Épargne / liquidités": "#58a843", "Objet de valeur": "#c29a2e", "Autre bien": "#8a8f9c",
 };
-const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", dette: "Dettes" };
+const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", dette: "Autres dettes" };
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 22 h 35";
+const APP_VERSION = "31 oct. 2026 · 22 h 40";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -959,21 +959,21 @@ function renderHome() {
 
   // répartition
   const byCat = {};
-  for (const a of S.assets) { if (a.kind === "dette") continue; const v = C.per[a.id].val[C.dates.length - 1]; if (v > 0) byCat[a.category] = (byCat[a.category] || 0) + v; }
+  for (const a of S.assets) { if (a.kind === "dette") continue; const v = netVal(a, C); if (v > 0) byCat[a.category] = (byCat[a.category] || 0) + v; }
   const cats = Object.entries(byCat).sort((x, y) => y[1] - x[1]);
   const catSum = cats.reduce((s, x) => s + x[1], 0) || 1;
 
   const groups = ["cote", "bien", "dette"].map(kind => {
-    const list = S.assets.filter(a => a.kind === kind);
+    const list = S.assets.filter(a => a.kind === kind && !isLinkedDebt(a));
     if (!list.length) return "";
-    const sum = list.reduce((s, a) => s + C.per[a.id].val[C.dates.length - 1], 0);
+    const sum = list.reduce((s, a) => s + netVal(a, C), 0);
     // regroupé par catégorie (ordre des catégories), puis par valeur décroissante
-    const last = x => Math.abs(C.per[x.id].val[C.dates.length - 1]);
+    const last = x => Math.abs(netVal(x, C));
     const order = c => { const i = CATS[kind].indexOf(c); return i < 0 ? 99 : i; };
     const cats = [...new Set(list.map(a => a.category))].sort((x, y) => order(x) - order(y) || x.localeCompare(y));
     const blocks = cats.map(c => {
       const items = list.filter(a => a.category === c).sort((x, y) => last(y) - last(x));
-      const sub = items.reduce((t, a) => t + C.per[a.id].val[C.dates.length - 1], 0);
+      const sub = items.reduce((t, a) => t + netVal(a, C), 0);
       return `<div class="cat-head"><span>${esc(c)}</span><span>${eur(sub)}</span></div><div class="list">${items.map(a => rowHtml(a, C, pos[a.id])).join("")}</div>`;
     }).join("");
     return `<section><div class="sec-head"><h2>${KIND_LABEL[kind]}</h2><span class="sum">${eur(sum)}</span></div><div class="cat-group">${blocks}</div></section>`;
@@ -1024,8 +1024,16 @@ function renderHome() {
   bindRanges(renderHome);
   $$(".row", app).forEach(r => r.onclick = () => openAssetSafe(r.dataset.id));
 }
+// un bien avec crédit compte pour sa valeur nette (valeur − capital restant dû) ; ses crédits ne sont pas listés à part
+function netVal(a, C, i = C.dates.length - 1) {
+  let v = C.per[a.id].val[i];
+  if (a.kind === "bien") for (const c of linkedCredits(a)) v += C.per[c.id].val[i];
+  return v;
+}
+const isLinkedDebt = a => a.kind === "dette" && a.linkedTo && S.assets.some(b => b.id === a.linkedTo && b.kind === "bien");
 function rowHtml(a, C, p) {
-  const r = C.per[a.id], n = C.dates.length, v = r.val[n - 1];
+  const r = C.per[a.id], n = C.dates.length, credits = a.kind === "bien" ? linkedCredits(a) : [];
+  const gross = r.val[n - 1], v = credits.length ? netVal(a, C) : gross;
   const from = Math.max(0, n - 91);
   let meta, delta;
   if (a.kind === "cote") {
@@ -1037,7 +1045,7 @@ function rowHtml(a, C, p) {
     const crd = -v / shareOf(a), rp = a.loan.amount ? (a.loan.amount - crd) / a.loan.amount * 100 : 0;
     delta = `<span class="pill up">${num(rp, 1)} % remb.</span>`;
   } else if (a.kind === "bien" && a.purchase && a.purchase.price) {
-    const cost = (+a.purchase.price || 0) + (+a.purchase.fees || 0), dv = v / shareOf(a) - cost;
+    const cost = (+a.purchase.price || 0) + (+a.purchase.fees || 0), dv = gross / shareOf(a) - cost;
     meta = `${esc(a.category)} · acheté ${eurAuto(+a.purchase.price)}${shareTxt(a) ? " · ta part " + shareTxt(a) : ""}`;
     delta = `<span class="pill ${cls(dv)}">${pct(dv / cost * 100)}</span>`;
   } else {
@@ -1049,8 +1057,8 @@ function rowHtml(a, C, p) {
   }
   return `<button type="button" class="row" data-id="${a.id}">
     <div style="min-width:0"><div class="name">${esc(a.name)}${a.demo ? `<span class="tag">exemple</span>` : ""}</div><div class="meta">${meta}</div></div>
-    <div class="spark" title="${a.kind === "cote" ? "Cours sur 3 mois" : "Valeur sur 3 mois"}">${spark(a.kind === "cote" && r.px ? r.px.slice(from).map(x => x ?? 0) : r.val.slice(from).map(Math.abs))}</div>
-    <div class="valbox"><div class="val">${eur(v)}</div>${a.kind === "cote" ? `<div class="qty">${num(p.qty, 6)} part${p.qty > 1 ? "s" : ""}</div>` : ""}</div>
+    <div class="spark" title="${a.kind === "cote" ? "Cours sur 3 mois" : credits.length ? "Valeur nette sur 3 mois" : "Valeur sur 3 mois"}">${spark(a.kind === "cote" && r.px ? r.px.slice(from).map(x => x ?? 0) : credits.length ? Array.from({ length: n - from }, (_, k) => netVal(a, C, from + k)) : r.val.slice(from).map(Math.abs))}</div>
+    <div class="valbox"><div class="val">${eur(v)}</div>${a.kind === "cote" ? `<div class="qty">${num(p.qty, 6)} part${p.qty > 1 ? "s" : ""}</div>` : credits.length ? `<div class="qty">valeur ${eurAuto(gross)} − crédit ${eurAuto(gross - v)}</div>` : ""}</div>
     <div class="delta">${delta}</div>
   </button>`;
 }
@@ -1810,7 +1818,11 @@ function openSettings() {
 }
 
 /* ================= Navigation & rafraîchissement ================= */
-function openAsset(id) { UI.view = "asset"; UI.assetId = id; UI.mode = "val"; render(); scrollTo(0, 0); }
+function openAsset(id) {
+  const a = S.assets.find(x => x.id === id);
+  UI.view = "asset"; UI.assetId = id; UI.mode = a && a.kind === "bien" && linkedCredits(a).length ? "eq" : "val";
+  render(); scrollTo(0, 0);
+}
 function needsLogin() { return !TOKEN && !UI.guest; }
 // affiche toute erreur à l'écran pour pouvoir la signaler
 function showError(e) {
