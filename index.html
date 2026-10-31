@@ -121,7 +121,7 @@ main.wrap { padding-block: 22px 60px; display: flex; flex-direction: column; gap
 .tip b { display: block; font-size: 13.5px; }
 .tip span { color: var(--muted); }
 
-.seg { display: inline-flex; background: var(--sunken); border-radius: 999px; padding: 3px; gap: 2px; }
+.seg { display: inline-flex; flex-wrap: wrap; background: var(--sunken); border-radius: 18px; padding: 3px; gap: 2px; }
 .seg button { border: 0; background: none; border-radius: 999px; padding: 4px 11px; font-size: 12.5px; font-weight: 600; color: var(--muted); cursor: pointer; text-transform: none; letter-spacing: 0; }
 .seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
 
@@ -570,7 +570,8 @@ function logout() {
 /* ================= Calculs ================= */
 let CALC = null;
 function firstDate(a) {
-  const ds = (a.kind === "cote" ? a.txs : a.vals).map(x => x.date).sort();
+  if (a.loan && a.loan.start) return loanFrom(a.loan);
+  const ds =(a.kind === "cote" ? a.txs : a.vals).map(x => x.date).sort();
   return ds[0] || null;
 }
 function compute() {
@@ -616,9 +617,14 @@ function quotedDaily(a, dates) {
   return { val, px, qty: qtyArr };
 }
 function manualDaily(a, dates) {
-  const n = dates.length, v = [...a.vals].sort((x, y) => x.date < y.date ? -1 : 1);
+  const n = dates.length, val = new Float64Array(n);
+  if (a.kind === "dette" && a.loan) {
+    for (let i = 0; i < n; i++) val[i] = -loanRemainingAt(a.loan, dates[i]);
+    return { val, px: null, qty: null };
+  }
+  const v = [...a.vals].sort((x, y) => x.date < y.date ? -1 : 1);
   const sign = a.kind === "dette" ? -1 : 1;
-  const val = new Float64Array(n);
+  const g = a.kind === "bien" ? (+a.growth || 0) / 100 : 0;
   let j = -1;
   const tv = v.map(x => toUnix(x.date));
   for (let i = 0; i < n; i++) {
@@ -629,10 +635,78 @@ function manualDaily(a, dates) {
     if (a.interp && j + 1 < v.length) {
       const f = (toUnix(d) - tv[j]) / (tv[j + 1] - tv[j]);
       x = v[j].value + (v[j + 1].value - v[j].value) * f;
+    } else if (g && j === v.length - 1 && x > 0) {
+      // après la dernière estimation : évolution annuelle du marché
+      x = x * Math.pow(1 + g, (toUnix(d) - tv[j]) / (365.25 * 86400));
     }
     val[i] = sign * x;
   }
   return { val, px: null, qty: null };
+}
+
+/* ================= Crédit immobilier ================= */
+function addMonths(s, m) {
+  const d = new Date(s + "T00:00:00Z"), day = d.getUTCDate();
+  d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + m);
+  const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, last));
+  return d.toISOString().slice(0, 10);
+}
+function loanPayment(L) {
+  const r = (+L.rate || 0) / 1200, n = +L.months || 1;
+  return r ? L.amount * r / (1 - Math.pow(1 + r, -n)) : L.amount / n;
+}
+const LOAN_CACHE = new Map();
+// Tableau d'amortissement : celui de la banque s'il a été saisi (L.rows), sinon calculé (mensualités constantes)
+function loanRows(L) {
+  const key = JSON.stringify(L);
+  if (LOAN_CACHE.has(key)) return LOAN_CACHE.get(key);
+  let rows;
+  if (Array.isArray(L.rows) && L.rows.length) {
+    rows = [...L.rows].sort((x, y) => x.date < y.date ? -1 : 1).map(r => ({ insurance: +L.insurance || 0, ...r }));
+  } else {
+    const r = (+L.rate || 0) / 1200, M = loanPayment(L);
+    let rem = +L.amount; rows = [];
+    for (let k = 0; k < (+L.months || 0) && rem > 0.005; k++) {
+      const interest = rem * r, principal = Math.min(rem, M - interest);
+      rem -= principal;
+      rows.push({ date: addMonths(L.start, k), payment: principal + interest, interest, principal, insurance: +L.insurance || 0, remaining: Math.max(0, rem) });
+    }
+  }
+  LOAN_CACHE.set(key, rows);
+  return rows;
+}
+function loanFrom(L) { return L.from || addMonths(L.start, -1); }
+function loanRemainingAt(L, date) {
+  if (!L || !L.start || date < loanFrom(L)) return 0;
+  const rows = loanRows(L);
+  let lo = 0, hi = rows.length - 1, ans = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (rows[m].date <= date) { ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans < 0 ? +L.amount : rows[ans].remaining;
+}
+function loanPaidUntil(L, date) {
+  let pay = 0, interest = 0, insurance = 0, principal = 0, n = 0;
+  for (const r of loanRows(L)) {
+    if (r.date > date) break;
+    pay += (r.payment ?? (r.principal || 0) + (r.interest || 0)); interest += r.interest || 0; principal += r.principal || 0; insurance += r.insurance || 0; n++;
+  }
+  return { pay, interest, insurance, principal, n };
+}
+function linkedCredit(bien) { return S.assets.find(x => x.kind === "dette" && x.loan && x.linkedTo === bien.id); }
+function linkedBien(credit) { return credit.linkedTo ? S.assets.find(x => x.id === credit.linkedTo) : null; }
+function saleSim(bien, credit, price, date, agencyPct) {
+  const L = credit?.loan;
+  const crd = L ? loanRemainingAt(L, date) : 0;
+  // indemnités de remboursement anticipé : plafond légal = min(6 mois d'intérêts, 3 % du capital restant dû)
+  const ira = L && crd > 0 ? Math.min(0.03 * crd, crd * (+L.rate || 0) / 1200 * 6) : 0;
+  const agency = price * (agencyPct || 0) / 100;
+  const net = price - agency - crd - ira;
+  const p = bien.purchase || {};
+  const cost = (+p.price || 0) + (+p.fees || 0);
+  const apport = Math.max(0, cost - (L ? +L.amount : 0));
+  const paid = L ? loanPaidUntil(L, date) : { pay: 0, interest: 0, insurance: 0, principal: 0, n: 0 };
+  const spent = apport + paid.pay + paid.insurance;
+  return { crd, ira, agency, net, apport, paid, spent, gain: net - spent, plusValue: price - agency - cost };
 }
 function positionStats(a) {
   // Coût moyen pondéré, en euros (au taux de change du jour de la transaction)
@@ -830,6 +904,15 @@ function rowHtml(a, C, p) {
   if (a.kind === "cote") {
     meta = `${esc(a.symbol.startsWith("EX:") ? "Exemple" : a.symbol)} · ${esc(a.category)}`;
     delta = p.cost > 0 ? `<span class="pill ${cls(p.latent)}">${pct(p.latent / p.cost * 100)}</span>` : `<span class="flat">—</span>`;
+  } else if (a.kind === "dette" && a.loan) {
+    const rows = loanRows(a.loan), end = rows[rows.length - 1]?.date;
+    meta = `${eur(loanPayment(a.loan) + (+a.loan.insurance || 0))}/mois${end ? " · fin " + end.slice(0, 4) : ""}`;
+    const crd = -v, rp = a.loan.amount ? (a.loan.amount - crd) / a.loan.amount * 100 : 0;
+    delta = `<span class="pill up">${num(rp, 1)} % remb.</span>`;
+  } else if (a.kind === "bien" && a.purchase && a.purchase.price) {
+    const cost = (+a.purchase.price || 0) + (+a.purchase.fees || 0), dv = v - cost;
+    meta = `${esc(a.category)} · acheté ${eurAuto(+a.purchase.price)}`;
+    delta = `<span class="pill ${cls(dv)}">${pct(dv / cost * 100)}</span>`;
   } else {
     const vs = [...a.vals].sort((x, y) => x.date < y.date ? -1 : 1);
     meta = `${esc(a.category)} · estimé le ${vs.length ? fmtDateShort(vs[vs.length - 1].date) : "—"}`;
@@ -848,6 +931,101 @@ function bindRanges(rerender) {
   $$(".ranges button").forEach(b => b.onclick = () => { UI.range = b.dataset.range; rerender(); });
 }
 
+/* ================= Rendu : immobilier et crédit ================= */
+function loanSections(a) {
+  const L = a.loan, rows = loanRows(L), t = today();
+  const crd = loanRemainingAt(L, t), paid = loanPaidUntil(L, t);
+  const M = rows[0] ? (rows[0].payment ?? loanPayment(L)) : loanPayment(L);
+  const ins = +L.insurance || 0;
+  const totInt = rows.reduce((s, r) => s + (r.interest || 0), 0), totIns = rows.reduce((s, r) => s + (r.insurance || 0), 0);
+  const end = rows.length ? rows[rows.length - 1].date : null;
+  const bien = linkedBien(a);
+  const repaidPct = L.amount ? (L.amount - crd) / L.amount * 100 : 0;
+  const stats = `<section class="stats six">
+    <div class="stat"><div class="k">Mensualité</div><div class="v">${eur(M + ins)}</div><div class="s flat">${ins ? "dont assurance " + eur(ins) : "hors assurance"}</div></div>
+    <div class="stat"><div class="k">Capital restant dû</div><div class="v">${eur(crd)}</div><div class="s flat">${num(repaidPct, 1)} % remboursé</div></div>
+    <div class="stat"><div class="k">Capital remboursé</div><div class="v">${eur(L.amount - crd)}</div><div class="s flat">${paid.n} échéance${paid.n > 1 ? "s" : ""} sur ${rows.length}</div></div>
+    <div class="stat"><div class="k">Intérêts payés à ce jour</div><div class="v">${eur(paid.interest)}</div><div class="s flat">${paid.insurance ? "+ " + eur(paid.insurance) + " d'assurance" : ""}</div></div>
+    <div class="stat"><div class="k">Coût total du crédit</div><div class="v">${eur(totInt + totIns)}</div><div class="s flat">intérêts ${eur(totInt)}${totIns ? " + assurance" : ""}</div></div>
+    <div class="stat"><div class="k">Fin du crédit</div><div class="v">${end ? fmtMonth(end) : "—"}</div><div class="s flat">${L.rows?.length ? "tableau de la banque" : num(+L.rate, 3) + " % sur " + num(L.months / 12, 1) + " ans"}</div></div>
+  </section>`;
+  const byYear = new Map();
+  for (const r of rows) {
+    const y = r.date.slice(0, 4), o = byYear.get(y) || { principal: 0, interest: 0, insurance: 0, remaining: 0 };
+    o.principal += r.principal || 0; o.interest += r.interest || 0; o.insurance += r.insurance || 0; o.remaining = r.remaining; byYear.set(y, o);
+  }
+  const cy = t.slice(0, 4);
+  const body = `<section>
+    ${bien ? `<p class="note" style="margin-bottom:12px">Crédit lié à <button type="button" class="btn ghost" data-open="${bien.id}" style="padding:2px 6px">${esc(bien.name)} →</button></p>` : ""}
+    <div class="sec-head"><h2>Tableau d'amortissement</h2><span class="sum">par année</span></div>
+    <div class="tbl"><table>
+      <thead><tr><th>Année</th><th class="num">Capital remboursé</th><th class="num">Intérêts</th><th class="num">Assurance</th><th class="num">Restant dû fin d'année</th></tr></thead>
+      <tbody>${[...byYear].map(([y, o]) => `<tr${y === cy ? ' style="font-weight:700;background:var(--sunken)"' : ""}><td>${y}</td><td class="num">${eur(o.principal)}</td><td class="num">${eur(o.interest)}</td><td class="num">${o.insurance ? eur(o.insurance) : "—"}</td><td class="num">${eur(o.remaining)}</td></tr>`).join("")}</tbody>
+    </table></div>
+    <details style="margin-top:10px"><summary style="cursor:pointer;font-weight:600;font-size:14px">Voir les ${rows.length} échéances</summary>
+      <div class="tbl" style="margin-top:8px;max-height:420px;overflow:auto"><table>
+        <thead><tr><th>N°</th><th>Date</th><th class="num">Mensualité</th><th class="num">Capital</th><th class="num">Intérêts</th><th class="num">Assurance</th><th class="num">Restant dû</th></tr></thead>
+        <tbody>${rows.map((r, i) => `<tr${r.date <= t ? ' style="color:var(--muted)"' : ""}><td>${i + 1}</td><td>${fmtDate(r.date)}</td><td class="num">${eur((r.payment ?? 0) + (r.insurance || 0))}</td><td class="num">${eur(r.principal || 0)}</td><td class="num">${eur(r.interest || 0)}</td><td class="num">${r.insurance ? eur(r.insurance) : "—"}</td><td class="num">${eur(r.remaining)}</td></tr>`).join("")}</tbody>
+      </table></div>
+    </details>
+    <p class="hint" style="margin-top:10px">${L.rows?.length ? "Échéances reprises du tableau de ta banque." : "Calculé avec des mensualités constantes à partir du montant, du taux et de la durée. Si le capital restant dû de ta banque est différent, corrige le taux ou la date de 1re échéance dans « Modifier »."}</p>
+  </section>`;
+  return [stats, body];
+}
+function immoSections(a, credit) {
+  const C = compute(), n = C.dates.length, p = a.purchase || {};
+  const value = C.per[a.id].val[n - 1];
+  const crd = credit ? -C.per[credit.id].val[n - 1] : 0;
+  const cost = (+p.price || 0) + (+p.fees || 0);
+  const pv = value - cost;
+  const M = credit ? loanPayment(credit.loan) + (+credit.loan.insurance || 0) : 0;
+  const stats = `<section class="stats six">
+    <div class="stat"><div class="k">Valeur estimée</div><div class="v">${eur(value)}</div><div class="s flat">${a.growth ? (a.growth > 0 ? "+" : "") + num(+a.growth, 2) + " %/an après la dernière estimation" : "selon tes estimations"}</div></div>
+    <div class="stat"><div class="k">Coût d'achat</div><div class="v">${cost ? eur(cost) : "—"}</div><div class="s flat">${p.price ? eur(+p.price) + (p.fees ? " + " + eur(+p.fees) + " de frais" : "") : "à renseigner dans Modifier"}</div></div>
+    <div class="stat"><div class="k">Plus-value latente</div><div class="v ${cost ? cls(pv) : "flat"}">${cost ? signed(pv) : "—"}</div><div class="s ${cls(pv)}">${cost ? pct(pv / cost * 100) : ""}</div></div>
+    <div class="stat"><div class="k">Capital restant dû</div><div class="v">${credit ? eur(crd) : "—"}</div><div class="s flat">${credit ? `<button type="button" class="btn ghost" data-open="${credit.id}" style="padding:0 4px;margin-left:-4px;font-size:12.5px">voir le crédit →</button>` : "pas de crédit lié"}</div></div>
+    <div class="stat"><div class="k">Ta part nette</div><div class="v ${cls(value - crd)}">${eur(value - crd)}</div><div class="s flat">valeur − crédit</div></div>
+    <div class="stat"><div class="k">Mensualité</div><div class="v">${credit ? eur(M) : "—"}</div><div class="s flat">${credit && credit.loan.insurance ? "assurance comprise" : ""}</div></div>
+  </section>`;
+  const def = Math.round(value / 1000) * 1000 || Math.round(+p.price || 0);
+  const sim = `<section><div class="sec-head"><h2>Et si je vends ?</h2></div>
+    <div class="form">
+      <div class="fields">
+        <label class="f">Prix de vente (€)<input type="number" id="sim-price" step="1000" min="0" inputmode="decimal" value="${def}"></label>
+        <label class="f">Date de vente<input type="date" id="sim-date" value="${today()}"></label>
+        <label class="f">Frais d'agence (%)<input type="number" id="sim-agency" step="0.5" min="0" max="15" inputmode="decimal" value="0"></label>
+      </div>
+      <div id="sim-out"></div>
+    </div></section>`;
+  return [stats, sim];
+}
+function bindSim(a, credit) {
+  const out = $("#sim-out"), P = $("#sim-price"), D = $("#sim-date"), F = $("#sim-agency");
+  const line = (label, v, opts = {}) => `<tr${opts.total ? ' style="font-weight:700;border-top:2px solid var(--line)"' : ""}><td style="white-space:normal">${label}${opts.sub ? `<div class="hint" style="font-weight:400">${opts.sub}</div>` : ""}</td><td class="num ${opts.cls || ""}">${v}</td></tr>`;
+  const run = () => {
+    const price = parseFloat(P.value) || 0, date = D.value || today(), ag = parseFloat(F.value) || 0;
+    const s = saleSim(a, credit, price, date, ag);
+    const hasCost = !!(a.purchase && a.purchase.price);
+    out.innerHTML = `
+      <div class="tbl" style="margin-top:4px"><table><tbody>
+        ${line("Prix de vente", eur(price))}
+        ${ag ? line(`Frais d'agence (${num(ag, 2)} %)`, "− " + eur(s.agency)) : ""}
+        ${credit ? line(`Capital restant dû au ${fmtDate(date)}`, "− " + eur(s.crd), { sub: "remboursé à la banque le jour de la vente" }) : ""}
+        ${credit && s.ira ? line("Indemnités de remboursement anticipé", "− " + eur(s.ira), { sub: "maximum légal : 6 mois d'intérêts, plafonné à 3 % du capital. Souvent négociable, parfois exclu dans ton contrat." }) : ""}
+        ${line("Ce qui te reste en poche", eur(s.net), { total: true, cls: cls(s.net) })}
+      </tbody></table></div>
+      ${hasCost ? `<div class="tbl" style="margin-top:10px"><table><tbody>
+        ${line("Ton apport à l'achat", eur(s.apport), { sub: credit ? "prix + frais − montant emprunté" : "prix + frais" })}
+        ${credit ? line(`Mensualités payées d'ici là (${s.paid.n})`, eur(s.paid.pay + s.paid.insurance), { sub: `dont ${eur(s.paid.principal)} de capital, ${eur(s.paid.interest)} d'intérêts${s.paid.insurance ? " et " + eur(s.paid.insurance) + " d'assurance" : ""}` }) : ""}
+        ${line("Total sorti de ta poche", eur(s.spent))}
+        ${line("Gain réel de l'opération", signed(s.gain), { total: true, cls: cls(s.gain), sub: "ce qui te reste − tout ce que tu as payé. Sans compter le loyer que tu aurais payé en location." })}
+      </tbody></table></div>` : `<p class="hint">Renseigne le prix d'achat dans « Modifier » pour voir ton gain réel.</p>`}
+      <p class="hint" style="margin-top:8px">Plus-value brute : ${signed(s.plusValue)}. ${a.category === "Immobilier" ? "Sur une résidence principale, la plus-value est exonérée d'impôt." : ""}</p>`;
+  };
+  [P, D, F].forEach(el => el.addEventListener("input", run));
+  run();
+}
+
 /* ================= Rendu : détail d'un actif ================= */
 function renderAsset() {
   const a = S.assets.find(x => x.id === UI.assetId);
@@ -856,14 +1034,17 @@ function renderAsset() {
   const i0 = Math.max(0, daysBetween(C.start, rangeStart(UI.range, firstDate(a) || C.start)));
   const isQ = a.kind === "cote";
   const showPx = isQ && UI.mode === "px";
-  const series = showPx ? r.px : Array.from(r.val).map(x => a.kind === "dette" ? -x : x);
+  const credit = a.kind === "bien" ? linkedCredit(a) : null;
+  const isImmo = a.kind === "bien" && (a.purchase || credit);
+  const showEq = !!credit && UI.mode === "eq";
+  const series = showPx ? r.px : showEq ? Array.from(r.val).map((x, i) => x + C.per[credit.id].val[i]) : Array.from(r.val).map(x => a.kind === "dette" ? -x : x);
   const dates = C.dates.slice(i0), vals = series.slice(i0);
   const cur = isQ ? assetCur(a) : "EUR";
   const p = isQ ? positionStats(a) : null;
   const lastV = vals[vals.length - 1] ?? 0;
   let k0 = 0; while (k0 < vals.length && vals[k0] == null) k0++;
   const firstV = vals[k0] ?? 0;
-  const label = showPx ? "Cours en euros" : a.kind === "dette" ? "Reste à rembourser" : isQ ? "Valeur détenue" : "Valeur estimée";
+  const label = showPx ? "Cours en euros" : showEq ? "Ta part nette (valeur − crédit)" : a.kind === "dette" ? (a.loan ? "Capital restant dû" : "Reste à rembourser") : isQ ? "Valeur détenue" : "Valeur estimée";
   const app = $("#app");
 
   let statsHtml = "", bodyHtml = "";
@@ -892,6 +1073,8 @@ function renderAsset() {
         <thead><tr><th>Date</th><th>Opération</th><th class="num">Quantité</th><th class="num">Prix unitaire</th><th class="num">Montant</th><th class="num">Frais</th><th></th></tr></thead>
         <tbody>${txs.map(t => `<tr><td>${fmtDate(t.date)}</td><td class="kind ${t.t}">${t.t === "sell" ? "Vente" : "Achat"}</td><td class="num">${num(t.qty, 8)}</td><td class="num">${money(t.price, cur)}</td><td class="num">${money(t.qty * t.price, cur)}</td><td class="num">${t.fees ? eur(t.fees) : "—"}</td><td class="num"><button type="button" class="del" data-del="${t.id}" aria-label="Supprimer l'opération">Supprimer</button></td></tr>`).join("")}</tbody></table></div>` : `<p class="empty">Aucune opération pour l'instant. Indique la quantité et la date : le prix du jour est récupéré automatiquement.</p>`}
     </section>`;
+  } else if (a.kind === "dette" && a.loan) {
+    [statsHtml, bodyHtml] = loanSections(a);
   } else {
     const vs = [...a.vals].sort((x, y) => x.date < y.date ? 1 : -1);
     const first = vs[vs.length - 1]?.value || 0, lastv = vs[0]?.value || 0;
@@ -914,6 +1097,7 @@ function renderAsset() {
       ${vs.length ? `<div class="tbl" style="margin-top:12px"><table><thead><tr><th>Date</th><th class="num">${a.kind === "dette" ? "Reste dû" : "Valeur"}</th><th></th></tr></thead>
         <tbody>${vs.map(v => `<tr><td>${fmtDate(v.date)}</td><td class="num">${eur(v.value)}</td><td class="num"><button type="button" class="del" data-del="${v.id}" aria-label="Supprimer l'estimation">Supprimer</button></td></tr>`).join("")}</tbody></table></div>` : ""}
     </section>`;
+    if (isImmo) { const [st, sim] = immoSections(a, credit); statsHtml = st; bodyHtml = sim + bodyHtml; }
   }
 
   app.innerHTML = `
@@ -924,7 +1108,7 @@ function renderAsset() {
       <div class="tools"><button class="btn" type="button" id="edit">Modifier</button></div>
     </div>
     <section class="hero">
-      <div class="eyebrow"><span id="lbl">${label}</span>${isQ ? `<span class="seg" role="group" aria-label="Affichage"><button type="button" data-mode="val" aria-pressed="${!showPx}">Ma position</button><button type="button" data-mode="px" aria-pressed="${showPx}">Cours</button></span>` : ""}</div>
+      <div class="eyebrow"><span id="lbl">${label}</span>${credit ? `<span class="seg" role="group" aria-label="Affichage"><button type="button" data-mode="val" aria-pressed="${!showEq}">Valeur du bien</button><button type="button" data-mode="eq" aria-pressed="${showEq}">Ma part nette</button></span>` : ""}${isQ ? `<span class="seg" role="group" aria-label="Affichage"><button type="button" data-mode="val" aria-pressed="${!showPx}">Ma position</button><button type="button" data-mode="px" aria-pressed="${showPx}">Cours</button></span>` : ""}</div>
       <div class="big" id="big">${eur(lastV)}</div>
       <div class="chg" id="chg"></div>
       ${rangeButtons()}
@@ -951,6 +1135,7 @@ function renderAsset() {
   $("#back").onclick = () => { UI.view = "home"; UI.mode = "val"; render(); scrollTo(0, 0); };
   $("#edit").onclick = () => openEdit(a);
   $$(".seg button", app).forEach(b => b.onclick = () => { UI.mode = b.dataset.mode; renderAsset(); });
+  $$("[data-open]", app).forEach(b => b.onclick = () => openAsset(b.dataset.open));
   armDeletes(app, id => {
     tomb(id);
     if (isQ) a.txs = a.txs.filter(t => t.id !== id); else a.vals = a.vals.filter(v => v.id !== id);
@@ -972,8 +1157,9 @@ function renderAsset() {
       a.txs.push({ id: uid(), t, date, qty, price, fees });
       save(); renderAsset(); toast(t === "sell" ? "Vente enregistrée" : "Achat enregistré");
     };
-  } else {
+  } else if ($("#valform")) {
     const f = $("#valform");
+    if (isImmo) bindSim(a, credit);
     f.onsubmit = e => {
       e.preventDefault();
       const date = $("#v-date", f).value, value = parseFloat($("#v-value", f).value);
@@ -1032,13 +1218,49 @@ function openDialog(html, onMount) {
 dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });
 const closeBtn = `<button class="icon-btn" type="button" data-close aria-label="Fermer"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M2 2l10 10M12 2L2 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>`;
 
+/* Champs partagés : crédit et achat immobilier */
+function loanFieldsHtml(L = {}) {
+  return `<div class="fields">
+    <label class="f">Montant emprunté (€)<input type="number" id="ln-amount" step="any" min="0" inputmode="decimal" value="${L.amount ?? ""}"></label>
+    <label class="f">Taux nominal (% par an)<input type="number" id="ln-rate" step="any" min="0" inputmode="decimal" value="${L.rate ?? ""}" placeholder="ex. 3,45"></label>
+    <label class="f">Durée (années)<input type="number" id="ln-years" step="any" min="1" max="40" inputmode="decimal" value="${L.months ? +(L.months / 12).toFixed(2) : ""}" placeholder="ex. 25"></label>
+    <label class="f">1re mensualité le<input type="date" id="ln-start" value="${L.start || ""}"></label>
+    <label class="f">Assurance (€ par mois)<input type="number" id="ln-ins" step="any" min="0" inputmode="decimal" value="${L.insurance ?? ""}" placeholder="0"></label>
+  </div><span class="hint" id="ln-hint">Ces chiffres sont sur ton offre de prêt ou ton tableau d'amortissement.</span>`;
+}
+function readLoan(d) {
+  const amount = parseFloat($("#ln-amount", d).value), rate = parseFloat($("#ln-rate", d).value) || 0;
+  const months = Math.round((parseFloat($("#ln-years", d).value) || 0) * 12), start = $("#ln-start", d).value, insurance = parseFloat($("#ln-ins", d).value) || 0;
+  return amount > 0 && months > 0 && start ? { amount, rate, months, start, insurance } : null;
+}
+function bindLoanPreview(d) {
+  const h = $("#ln-hint", d);
+  const run = () => {
+    const L = readLoan(d); if (!L) return;
+    const M = loanPayment(L), rows = loanRows(L), totInt = rows.reduce((s, r) => s + r.interest, 0);
+    h.className = "hint"; h.textContent = `Mensualité calculée : ${eur(M)} hors assurance${L.insurance ? ", " + eur(M + L.insurance) + " avec" : ""} · intérêts totaux ${eur(totInt)} · fin ${fmtMonth(rows[rows.length - 1].date)}. Compare avec ton tableau d'amortissement.`;
+  };
+  $$("#ln-amount, #ln-rate, #ln-years, #ln-start, #ln-ins", d).forEach(el => el.addEventListener("input", run));
+  run();
+}
+function purchaseFieldsHtml(p = {}, growth) {
+  return `<div class="fields">
+    <label class="f">Date d'achat<input type="date" id="pu-date" max="${today()}" value="${p.date || ""}" required></label>
+    <label class="f">Prix d'achat (€)<input type="number" id="pu-price" step="any" min="0" inputmode="decimal" value="${p.price ?? ""}" required></label>
+    <label class="f">Frais d'achat (€)<input type="number" id="pu-fees" step="any" min="0" inputmode="decimal" value="${p.fees ?? ""}" placeholder="notaire, agence, garantie"></label>
+    <label class="f">Évolution du marché (% par an)<input type="number" id="pu-growth" step="any" inputmode="decimal" value="${growth ?? ""}" placeholder="ex. 1 (facultatif)"></label>
+  </div>`;
+}
+
 function openAdd(kind = "cote") {
   const opts = c => CATS[c].map(x => `<option>${esc(x)}</option>`).join("");
+  if (kind === "immo") return openAddImmo();
   openDialog(`
     <div class="dlg-head"><h2>Ajouter</h2>${closeBtn}</div>
     <div class="dlg-body">
       <div class="seg" role="group" aria-label="Type d'élément" style="align-self:flex-start">
         <button type="button" data-k="cote" aria-pressed="${kind === "cote"}">Placement coté</button>
+        <button type="button" data-k="immo" aria-pressed="false">Immobilier</button>
         <button type="button" data-k="bien" aria-pressed="${kind === "bien"}">Bien</button>
         <button type="button" data-k="dette" aria-pressed="${kind === "dette"}">Dette</button>
       </div>
@@ -1136,8 +1358,58 @@ function openAdd(kind = "cote") {
   });
 }
 
+function openAddImmo() {
+  openDialog(`
+    <div class="dlg-head"><h2>Ajouter</h2>${closeBtn}</div>
+    <div class="dlg-body">
+      <div class="seg" role="group" aria-label="Type d'élément" style="align-self:flex-start;flex-wrap:wrap">
+        <button type="button" data-k="cote" aria-pressed="false">Placement coté</button>
+        <button type="button" data-k="immo" aria-pressed="true">Immobilier</button>
+        <button type="button" data-k="bien" aria-pressed="false">Bien</button>
+        <button type="button" data-k="dette" aria-pressed="false">Dette</button>
+      </div>
+      <form id="addform" autocomplete="off" style="display:flex;flex-direction:column;gap:14px">
+        <label class="f">Nom<input type="text" id="a-name" value="Résidence principale" required></label>
+        ${purchaseFieldsHtml()}
+        <label class="f">Valeur estimée aujourd'hui (€)<input type="number" id="a-est" step="any" min="0" inputmode="decimal" placeholder="facultatif : sinon, le prix d'achat"></label>
+        <hr class="divider">
+        <label class="check"><input type="checkbox" id="a-hasloan" checked> Acheté avec un crédit</label>
+        <div id="loanbox" style="display:flex;flex-direction:column;gap:8px">${loanFieldsHtml()}</div>
+        <span class="hint err" id="a-hint"></span>
+        <div class="form-actions"><button class="btn" type="button" data-close>Annuler</button><button class="btn primary" type="submit">Ajouter</button></div>
+      </form>
+    </div>`, d => {
+    $$("[data-k]", d).forEach(b => b.onclick = () => openAdd(b.dataset.k));
+    const has = $("#a-hasloan", d), box = $("#loanbox", d);
+    has.onchange = () => { box.hidden = !has.checked; };
+    // date de 1re mensualité proposée : un mois après l'achat
+    $("#pu-date", d).addEventListener("change", e => { const s = $("#ln-start", d); if (!s.value && e.target.value) { s.value = addMonths(e.target.value, 1); s.dispatchEvent(new Event("input")); } });
+    bindLoanPreview(d);
+    $("#addform", d).onsubmit = e => {
+      e.preventDefault();
+      const hint = $("#a-hint", d);
+      const name = $("#a-name", d).value.trim() || "Bien immobilier";
+      const date = $("#pu-date", d).value, price = parseFloat($("#pu-price", d).value), fees = parseFloat($("#pu-fees", d).value) || 0;
+      const growth = parseFloat($("#pu-growth", d).value), est = parseFloat($("#a-est", d).value);
+      if (!date || !(price > 0)) { hint.textContent = "Indique la date et le prix d'achat."; return; }
+      const L = has.checked ? readLoan(d) : null;
+      if (has.checked && !L) { hint.textContent = "Complète le crédit (montant, durée, date de 1re mensualité) ou décoche la case."; return; }
+      const bien = { id: uid(), kind: "bien", name, category: "Immobilier", interp: true, purchase: { date, price, fees }, txs: [],
+        vals: [{ id: uid(), date, value: price }] };
+      if (!isNaN(growth)) bien.growth = growth;
+      if (est > 0 && today() > date) bien.vals.push({ id: uid(), date: today(), value: est });
+      S.assets.push(bien);
+      if (L) S.assets.push({ id: uid(), kind: "dette", name: "Crédit · " + name, category: "Crédit immobilier", linkedTo: bien.id, loan: { ...L, from: date }, txs: [], vals: [] });
+      save(); dlg.close(); openAsset(bien.id); toast("Ajouté");
+    };
+  });
+}
+
 function openEdit(a) {
   const isQ = a.kind === "cote";
+  const isLoan = a.kind === "dette" && !!a.loan;
+  const isImmoBien = a.kind === "bien" && a.category === "Immobilier";
+  const credit = a.kind === "bien" ? linkedCredit(a) : null;
   openDialog(`
     <div class="dlg-head"><h2>Modifier</h2>${closeBtn}</div>
     <div class="dlg-body">
@@ -1147,9 +1419,12 @@ function openEdit(a) {
           ${isQ ? `<label class="f">Symbole<input type="text" id="e-symbol" value="${esc(a.symbol)}" required></label>` : ""}
           <label class="f">Catégorie<select id="e-cat">${CATS[a.kind].map(c => `<option ${c === a.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
         </div>
-        ${!isQ ? `<label class="check"><input type="checkbox" id="e-interp" ${a.interp ? "checked" : ""}> Évolution progressive entre deux estimations</label>` : ""}
+        ${!isQ && !isLoan ? `<label class="check"><input type="checkbox" id="e-interp" ${a.interp ? "checked" : ""}> Évolution progressive entre deux estimations</label>` : ""}
+        ${isImmoBien ? `<hr class="divider"><div class="setting"><h3>Achat</h3></div>${purchaseFieldsHtml(a.purchase || {}, a.growth)}` : ""}
+        ${isLoan ? `<hr class="divider"><div class="setting"><h3>Crédit</h3></div>${loanFieldsHtml(a.loan)}` : ""}
+        <span class="hint err" id="e-hint"></span>
         <div class="form-actions">
-          <button class="btn danger" type="button" id="e-del" style="margin-right:auto">Supprimer</button>
+          <button class="btn danger" type="button" id="e-del" style="margin-right:auto">${credit ? "Supprimer (avec son crédit)" : "Supprimer"}</button>
           <button class="btn" type="button" data-close>Annuler</button><button class="btn primary" type="submit">Enregistrer</button>
         </div>
       </form>
@@ -1157,16 +1432,34 @@ function openEdit(a) {
     const del = $("#e-del", d);
     del.onclick = () => {
       if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Confirmer la suppression"; return; }
-      tomb(a.id); S.assets = S.assets.filter(x => x.id !== a.id); save(); dlg.close(); UI.view = "home"; render(); toast("Élément supprimé");
+      const gone = [a.id, ...(credit ? [credit.id] : [])];
+      tomb(...gone); S.assets = S.assets.filter(x => !gone.includes(x.id)); save(); dlg.close(); UI.view = "home"; render(); toast("Élément supprimé");
     };
     $("#editform", d).onsubmit = e => {
       e.preventDefault();
       a.name = $("#e-name", d).value.trim() || a.name;
       a.category = $("#e-cat", d).value;
       if (isQ) { const s = $("#e-symbol", d).value.trim().toUpperCase(); if (s && s !== a.symbol) { a.symbol = s; a.demo = false; } }
-      else a.interp = $("#e-interp", d).checked;
+      else if (!isLoan) a.interp = $("#e-interp", d).checked;
+      if (isLoan) {
+        const L = readLoan(d);
+        if (!L) { $("#e-hint", d).textContent = "Complète le montant, la durée et la date de 1re mensualité."; return; }
+        a.loan = { ...a.loan, ...L };
+      }
+      if (isImmoBien) {
+        const date = $("#pu-date", d).value, price = parseFloat($("#pu-price", d).value), fees = parseFloat($("#pu-fees", d).value) || 0, g = parseFloat($("#pu-growth", d).value);
+        if (date && price > 0) {
+          const old = a.purchase;
+          // la valeur au jour de l'achat suit le prix d'achat
+          const first = old && a.vals.find(v => v.date === old.date && v.value === +old.price);
+          if (first) { first.date = date; first.value = price; } else if (!a.vals.some(v => v.date === date)) a.vals.push({ id: uid(), date, value: price });
+          a.purchase = { date, price, fees };
+        }
+        if (isNaN(g)) delete a.growth; else a.growth = g;
+      }
       save(); dlg.close(); render(); refreshPrices();
     };
+    if (isLoan) bindLoanPreview(d);
   });
 }
 
