@@ -318,11 +318,13 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
+const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 function load() {
   try { S = JSON.parse(localStorage.getItem(KEY)); } catch (e) { S = null; }
   try { P = JSON.parse(localStorage.getItem(PKEY)) || {}; } catch (e) { P = {}; }
   if (!S || !Array.isArray(S.assets)) S = demoState();
+  if (!S.workerUrl) S.workerUrl = DEFAULT_WORKER;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast("Sauvegarde impossible sur cet appareil"); } CALC = null; }
 function saveP() { try { localStorage.setItem(PKEY, JSON.stringify(P)); } catch (e) { /* cache plein : on ignore */ } }

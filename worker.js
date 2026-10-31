@@ -60,9 +60,14 @@ export default {
     let res = await cache.match(cacheKey);
 
     if (!res) {
-      const upstream = await fetch(target, {
-        headers: { "User-Agent": UA, Accept: "application/json" },
-      });
+      const opts = { headers: { "User-Agent": UA, Accept: "application/json" } };
+      let upstream = await fetch(target, opts);
+      if (!upstream.ok) {
+        // Yahoo refuse parfois un des deux serveurs : on essaie l'autre
+        const alt = target.includes("query1.") ? target.replace("query1.", "query2.") : target.replace("query2.", "query1.");
+        const retry = await fetch(alt, opts);
+        if (retry.ok || upstream.status >= 500) upstream = retry;
+      }
       const body = await upstream.text();
       res = new Response(body, {
         status: upstream.status,
