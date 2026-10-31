@@ -1564,15 +1564,20 @@ function openEdit(a) {
 function importAssets(list) {
   let added = 0;
   const key = x => [x.t || "", x.date, +(+x.qty || 0).toFixed(10), +(+x.value || 0).toFixed(2)].join("|");
-  for (const inc of list) {
+  const idMap = {};
+  for (let inc of list) {
     if (!inc || !inc.kind) continue;
+    if (inc.linkedTo && idMap[inc.linkedTo]) inc = { ...inc, linkedTo: idMap[inc.linkedTo] };
     const same = S.assets.find(a => !a.demo && (a.id === inc.id || (inc.kind === "cote" && a.kind === "cote" && a.symbol === inc.symbol) || (inc.kind !== "cote" && a.kind === inc.kind && a.name === inc.name)));
     if (!same) {
       const copy = { ...inc, id: !inc.id || S.assets.some(a => a.id === inc.id) ? uid() : inc.id, demo: false,
         txs: (inc.txs || []).map(t => ({ fees: 0, ...t, id: t.id || uid() })), vals: (inc.vals || []).map(v => ({ ...v, id: v.id || uid() })) };
       if (copy.kind === "cote" && !copy.currency) copy.currency = "EUR";
-      S.assets.push(copy); added += copy.txs.length + copy.vals.length; continue;
+      S.assets.push(copy); added += Math.max(1, copy.txs.length + copy.vals.length); continue;
     }
+    if (inc.id) idMap[inc.id] = same.id;
+    // complète les réglages d'un bien ou d'un crédit déjà présent (achat, quote-part, crédit…)
+    for (const k of ["purchase", "share", "growth", "loan", "linkedTo", "interp"]) if (inc[k] !== undefined && (same[k] === undefined || (k === "loan" && JSON.stringify(same.loan) !== JSON.stringify(inc.loan)))) { same[k] = inc[k]; added++; }
     const have = new Set([...(same.txs || []), ...(same.vals || [])].map(key));
     for (const t of inc.txs || []) if (!have.has(key(t))) { same.txs.push({ fees: 0, ...t, id: uid() }); added++; }
     for (const v of inc.vals || []) if (!have.has(key(v))) { same.vals.push({ ...v, id: uid() }); added++; }
