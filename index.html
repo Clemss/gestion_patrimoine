@@ -321,7 +321,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 22 h 20";
+const APP_VERSION = "31 oct. 2026 · 22 h 25";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -347,6 +347,9 @@ function repairIds() {
       a.id = nid; fixed = true; void old;
     }
     seen.add(a.id);
+    // réglages d'un autre type copiés par erreur (ex. un prêt sur un placement coté)
+    if (a.kind !== "dette") for (const k of ["loan", "linkedTo"]) if (k in a) { delete a[k]; fixed = true; }
+    if (a.kind !== "bien") for (const k of ["purchase", "share", "growth"]) if (k in a) { delete a[k]; fixed = true; }
     a.txs = Array.isArray(a.txs) ? a.txs : []; a.vals = Array.isArray(a.vals) ? a.vals : [];
     const sub = new Set();
     for (const x of [...a.txs, ...a.vals]) { if (!x.id || sub.has(x.id)) { x.id = uid(); fixed = true; } sub.add(x.id); }
@@ -601,7 +604,7 @@ function logout() {
 /* ================= Calculs ================= */
 let CALC = null;
 function firstDate(a) {
-  if (a.loan && a.loan.start) return loanFrom(a.loan);
+  if (a.kind === "dette" && a.loan && a.loan.start) return loanFrom(a.loan);
   const ds =(a.kind === "cote" ? a.txs : a.vals).map(x => x.date).sort();
   return ds[0] || null;
 }
@@ -1639,7 +1642,7 @@ function importAssets(list) {
   for (let inc of list) {
     if (!inc || !inc.kind) continue;
     if (inc.linkedTo && idMap[inc.linkedTo]) inc = { ...inc, linkedTo: idMap[inc.linkedTo] };
-    const same = S.assets.find(a => !a.demo && (a.id === inc.id || (inc.kind === "cote" && a.kind === "cote" && a.symbol === inc.symbol) || (inc.kind !== "cote" && a.kind === inc.kind && a.name === inc.name)));
+    const same = S.assets.find(a => !a.demo && ((inc.id && a.id === inc.id) || (inc.kind === "cote" && a.kind === "cote" && a.symbol === inc.symbol) || (inc.kind !== "cote" && a.kind === inc.kind && a.name === inc.name)));
     if (!same) {
       const copy = { ...inc, id: !inc.id || S.assets.some(a => a.id === inc.id) ? uid() : inc.id, demo: false,
         txs: (inc.txs || []).map(t => ({ fees: 0, ...t, id: t.id || uid() })), vals: (inc.vals || []).map(v => ({ ...v, id: v.id || uid() })) };
@@ -1649,7 +1652,8 @@ function importAssets(list) {
     if (inc.id) idMap[inc.id] = same.id;
     // complète les réglages d'un bien ou d'un crédit déjà présent (achat, quote-part, crédit…)
     const orphan = x => !x.linkedTo || !S.assets.some(y => y.id === x.linkedTo);
-    for (const k of ["purchase", "share", "growth", "loan", "linkedTo", "interp"]) if (inc[k] !== undefined && (same[k] === undefined || (k === "loan" && JSON.stringify(same.loan) !== JSON.stringify(inc.loan)) || (k === "linkedTo" && same.linkedTo !== inc.linkedTo && orphan(same)) || (["purchase", "share", "growth"].includes(k) && JSON.stringify(same[k]) !== JSON.stringify(inc[k])))) { same[k] = inc[k]; added++; }
+    const fits = { cote: [], bien: ["purchase", "share", "growth", "interp"], dette: ["loan", "linkedTo", "interp"] }[same.kind] || [];
+    for (const k of fits) if (inc[k] !== undefined && (same[k] === undefined || (k === "loan" && JSON.stringify(same.loan) !== JSON.stringify(inc.loan)) || (k === "linkedTo" && same.linkedTo !== inc.linkedTo && orphan(same)) || (["purchase", "share", "growth"].includes(k) && JSON.stringify(same[k]) !== JSON.stringify(inc[k])))) { same[k] = inc[k]; added++; }
     const have = new Set([...(same.txs || []), ...(same.vals || [])].map(key));
     for (const t of inc.txs || []) if (!have.has(key(t))) { same.txs.push({ fees: 0, ...t, id: uid() }); added++; }
     for (const v of inc.vals || []) if (!have.has(key(v))) { same.vals.push({ ...v, id: uid() }); added++; }
