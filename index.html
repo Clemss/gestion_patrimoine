@@ -1179,11 +1179,13 @@ function importAssets(list) {
     if (!inc || !inc.kind) continue;
     const same = S.assets.find(a => !a.demo && (a.id === inc.id || (inc.kind === "cote" && a.kind === "cote" && a.symbol === inc.symbol) || (inc.kind !== "cote" && a.kind === inc.kind && a.name === inc.name)));
     if (!same) {
-      const copy = { ...inc, id: S.assets.some(a => a.id === inc.id) ? uid() : inc.id, demo: false, txs: inc.txs || [], vals: inc.vals || [] };
+      const copy = { ...inc, id: !inc.id || S.assets.some(a => a.id === inc.id) ? uid() : inc.id, demo: false,
+        txs: (inc.txs || []).map(t => ({ fees: 0, ...t, id: t.id || uid() })), vals: (inc.vals || []).map(v => ({ ...v, id: v.id || uid() })) };
+      if (copy.kind === "cote" && !copy.currency) copy.currency = "EUR";
       S.assets.push(copy); added += copy.txs.length + copy.vals.length; continue;
     }
     const have = new Set([...(same.txs || []), ...(same.vals || [])].map(key));
-    for (const t of inc.txs || []) if (!have.has(key(t))) { same.txs.push({ ...t, id: uid() }); added++; }
+    for (const t of inc.txs || []) if (!have.has(key(t))) { same.txs.push({ fees: 0, ...t, id: uid() }); added++; }
     for (const v of inc.vals || []) if (!have.has(key(v))) { same.vals.push({ ...v, id: uid() }); added++; }
   }
   return added;
@@ -1217,6 +1219,10 @@ function openSettings() {
           <label class="btn" for="s-import" style="cursor:pointer">Importer un fichier</label>
           <input type="file" id="s-import" accept="application/json,.json" hidden>
         </div>
+        <label class="f" style="margin-top:10px">Ou colle des données ici
+          <textarea id="s-paste" rows="3" placeholder='{"assets":[…]}' style="width:100%;border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:8px 10px;font:13px/1.4 ui-monospace,Menlo,monospace;color:var(--ink);resize:vertical"></textarea>
+        </label>
+        <div class="row-btns" style="margin-top:6px"><button class="btn" type="button" id="s-paste-go">Ajouter les données collées</button><span class="hint" id="s-paste-hint"></span></div>
       </div>
       <hr class="divider">
       <div class="setting">
@@ -1263,6 +1269,16 @@ function openSettings() {
         save(); dlg.close(); UI.view = "home"; render(); refreshPrices(); updateBanner();
         toast(n ? n + " opération" + (n > 1 ? "s" : "") + " ou estimation" + (n > 1 ? "s" : "") + " ajoutée" + (n > 1 ? "s" : "") : "Rien de nouveau dans ce fichier");
       } catch (err) { toast("Fichier non reconnu"); }
+    };
+    $("#s-paste-go", d).onclick = () => {
+      const h = $("#s-paste-hint", d);
+      try {
+        const j = JSON.parse($("#s-paste", d).value.trim()); const data = j.data || j;
+        if (!Array.isArray(data.assets)) throw new Error();
+        const n = importAssets(data.assets);
+        save(); dlg.close(); UI.view = "home"; render(); refreshPrices(); updateBanner();
+        toast(n ? n + " ligne" + (n > 1 ? "s" : "") + " ajoutée" + (n > 1 ? "s" : "") : "Rien de nouveau dans ces données");
+      } catch (err) { h.className = "hint err"; h.textContent = "Texte non reconnu : colle-le en entier, de { à }."; }
     };
     $("#s-refresh", d).onclick = () => { dlg.close(); refreshPrices(true); };
     if (!TOKEN) $("#s-demo", d).onclick = () => {
