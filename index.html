@@ -685,11 +685,18 @@ function loanRows(L) {
       else { if (M === null) M = annuity(rem, L.rate, n - k); pay = M; }
       const principal = Math.max(0, Math.min(rem, pay - interest));
       rem -= principal;
-      rows.push({ date: addMonths(L.start, k), payment: principal + interest, interest, principal, insurance: +L.insurance || 0, remaining: Math.max(0, rem), deferred: k < def });
+      const date = addMonths(L.start, k);
+      rows.push({ date, payment: principal + interest, interest, principal, insurance: insuranceAt(L, date), remaining: Math.max(0, rem), deferred: k < def });
     }
   }
   LOAN_CACHE.set(key, rows);
   return rows;
+}
+// assurance du mois : échéancier de la banque si fourni ([["AAAA-MM", montant], …], chaque montant vaut jusqu'au suivant)
+function insuranceAt(L, date) {
+  let v = +L.insurance || 0;
+  for (const [m, amt] of L.insuranceSchedule || []) if (m <= date.slice(0, 7)) v = +amt;
+  return v;
 }
 function loanFrom(L) { return L.from || addMonths(L.start, -1); }
 function loanRemainingAt(L, date) {
