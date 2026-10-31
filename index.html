@@ -321,7 +321,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 22 h 05";
+const APP_VERSION = "31 oct. 2026 · 22 h 10";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -333,7 +333,25 @@ function load() {
   if (!S || !Array.isArray(S.assets)) S = demoState();
   S.workerUrl = cleanUrl(S.workerUrl) || DEFAULT_WORKER;
   S.rev = S.rev | 0; S.deleted = S.deleted || [];
+  if (repairIds()) { S.dirty = true; persist(); }
   relinkOrphans();
+}
+// chaque élément, opération et estimation doit avoir un identifiant unique (données anciennes ou importées)
+function repairIds() {
+  let fixed = false;
+  const seen = new Set();
+  for (const a of S.assets) {
+    if (!a.id || a.id === "undefined" || seen.has(a.id)) {
+      const old = a.id, nid = uid();
+      // un crédit relié à l'ancien identifiant en double reste relié au premier bien ; un identifiant vide n'a pas de crédit
+      a.id = nid; fixed = true; void old;
+    }
+    seen.add(a.id);
+    a.txs = Array.isArray(a.txs) ? a.txs : []; a.vals = Array.isArray(a.vals) ? a.vals : [];
+    const sub = new Set();
+    for (const x of [...a.txs, ...a.vals]) { if (!x.id || sub.has(x.id)) { x.id = uid(); fixed = true; } sub.add(x.id); }
+  }
+  return fixed;
 }
 // un crédit immobilier qui ne pointe vers aucun bien est rattaché au bien immobilier s'il n'y en a qu'un
 function relinkOrphans() {
