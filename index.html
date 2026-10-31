@@ -321,7 +321,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 22 h 10";
+const APP_VERSION = "31 oct. 2026 · 22 h 15";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -1754,8 +1754,10 @@ function showError(e) {
   if (!box) { box = document.createElement("div"); box.id = "errbox"; box.style.cssText = "position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:200;background:var(--down);color:#fff;padding:10px 14px;border-radius:10px;font:13px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;max-height:40vh;overflow:auto"; box.onclick = () => box.remove(); document.body.appendChild(box); }
   box.textContent = "Erreur (touche pour fermer) : " + msg + (e?.stack ? "\n" + String(e.stack).split("\n").slice(0, 3).join("\n") : "");
 }
-addEventListener("error", e => showError(e.error || e.message));
-addEventListener("unhandledrejection", e => showError(e.reason));
+// ignore les erreurs des extensions du navigateur (MetaMask, etc.), qui ne viennent pas de l'appli
+const fromExtension = e => /(chrome|moz|safari(-web)?)-extension:\/\//.test(String(e?.filename || "") + String(e?.error?.stack || "") + String(e?.reason?.stack || "") + String(e?.reason || ""));
+addEventListener("error", e => { if (!fromExtension(e)) showError(e.error || e.message); });
+addEventListener("unhandledrejection", e => { if (!fromExtension(e)) showError(e.reason); });
 function openAssetSafe(id) { try { openAsset(id); } catch (e) { UI.view = "home"; showError(e); } }
 function render() {
   const lock = needsLogin();
