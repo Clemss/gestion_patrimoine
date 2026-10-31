@@ -1035,6 +1035,11 @@ function immoSections(a, credits) {
         <div style="min-width:0"><div class="name">${esc(c.name)}</div><div class="meta" style="white-space:normal">${eur(+L.amount)} à ${num(+L.rate, 3)} % · ${eur(loanMonthly(L))}/mois${L.deferral ? " · différé " + L.deferral + " mois" : ""}${end ? " · fin " + end.slice(0, 4) : ""}</div></div>
         <div class="valbox"><div class="val">${eur(cr)}</div><div class="qty">restant dû</div></div></button>`;
     }).join("")}</div>` : `<p class="empty">Aucun crédit lié à ce bien.</p>`}
+    ${(() => {
+      const free = S.assets.filter(x => x.kind === "dette" && x.loan && (!x.linkedTo || !S.assets.some(y => y.id === x.linkedTo)));
+      return free.length ? `<div class="form" style="margin-top:10px"><div class="setting"><h3>Crédits non reliés à un bien</h3><p>Relie-les à ce bien pour qu'ils comptent dans ta part nette et le simulateur.</p></div>
+        <div class="list">${free.map(c => `<div class="row" style="grid-template-columns:minmax(0,1fr) auto;cursor:default"><div style="min-width:0"><div class="name">${esc(c.name)}</div><div class="meta">${eur(+c.loan.amount)} à ${num(+c.loan.rate, 3)} %</div></div><button class="btn primary" type="button" data-link="${c.id}">Relier à ce bien</button></div>`).join("")}</div></div>` : "";
+    })()}
   </section>`;
   const def = Math.round(value / 1000) * 1000 || Math.round(+p.price || 0);
   const sim = `<section><div class="sec-head"><h2>Et si je vends ?</h2></div>
@@ -1189,6 +1194,7 @@ function renderAsset() {
   $("#edit").onclick = () => openEdit(a);
   $$(".seg button", app).forEach(b => b.onclick = () => { UI.mode = b.dataset.mode; renderAsset(); });
   $$("[data-open]", app).forEach(b => b.onclick = () => openAsset(b.dataset.open));
+  $$("[data-link]", app).forEach(b => b.onclick = () => { const c = S.assets.find(x => x.id === b.dataset.link); if (c) { c.linkedTo = a.id; save(); renderAsset(); toast("Crédit relié"); } });
   armDeletes(app, id => {
     tomb(id);
     if (isQ) a.txs = a.txs.filter(t => t.id !== id); else a.vals = a.vals.filter(v => v.id !== id);
@@ -1584,7 +1590,8 @@ function importAssets(list) {
     }
     if (inc.id) idMap[inc.id] = same.id;
     // complète les réglages d'un bien ou d'un crédit déjà présent (achat, quote-part, crédit…)
-    for (const k of ["purchase", "share", "growth", "loan", "linkedTo", "interp"]) if (inc[k] !== undefined && (same[k] === undefined || (k === "loan" && JSON.stringify(same.loan) !== JSON.stringify(inc.loan)))) { same[k] = inc[k]; added++; }
+    const orphan = x => !x.linkedTo || !S.assets.some(y => y.id === x.linkedTo);
+    for (const k of ["purchase", "share", "growth", "loan", "linkedTo", "interp"]) if (inc[k] !== undefined && (same[k] === undefined || (k === "loan" && JSON.stringify(same.loan) !== JSON.stringify(inc.loan)) || (k === "linkedTo" && same.linkedTo !== inc.linkedTo && orphan(same)))) { same[k] = inc[k]; added++; }
     const have = new Set([...(same.txs || []), ...(same.vals || [])].map(key));
     for (const t of inc.txs || []) if (!have.has(key(t))) { same.txs.push({ fees: 0, ...t, id: uid() }); added++; }
     for (const v of inc.vals || []) if (!have.has(key(v))) { same.vals.push({ ...v, id: uid() }); added++; }
