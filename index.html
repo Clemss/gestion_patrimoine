@@ -586,6 +586,8 @@ function compute() {
   const total = new Float64Array(n), assets = new Float64Array(n), debts = new Float64Array(n);
   for (const a of S.assets) {
     const r = a.kind === "cote" ? quotedDaily(a, dates) : manualDaily(a, dates);
+    const f = shareOf(a);
+    if (f !== 1) for (let i = 0; i < n; i++) r.val[i] *= f;
     per[a.id] = r;
     for (let i = 0; i < n; i++) {
       total[i] += r.val[i];
@@ -699,6 +701,13 @@ function loanPaidUntil(L, date) {
   }
   return { pay, interest, insurance, principal, n };
 }
+// quote-part de propriété (bien en indivision) : un crédit lié suit la part du bien
+function shareOf(a) {
+  if (a.kind === "bien") return a.share > 0 && a.share < 100 ? a.share / 100 : 1;
+  if (a.kind === "dette" && a.linkedTo) { const b = S.assets.find(x => x.id === a.linkedTo); return b ? shareOf(b) : 1; }
+  return 1;
+}
+const shareTxt = a => shareOf(a) !== 1 ? num(shareOf(a) * 100, 2) + " %" : "";
 function linkedCredits(bien) { return S.assets.filter(x => x.kind === "dette" && x.loan && x.linkedTo === bien.id); }
 function linkedBien(credit) { return credit.linkedTo ? S.assets.find(x => x.id === credit.linkedTo) : null; }
 function saleSim(bien, credits, price, date, agencyPct) {
@@ -920,12 +929,12 @@ function rowHtml(a, C, p) {
     delta = p.cost > 0 ? `<span class="pill ${cls(p.latent)}">${pct(p.latent / p.cost * 100)}</span>` : `<span class="flat">—</span>`;
   } else if (a.kind === "dette" && a.loan) {
     const rows = loanRows(a.loan), end = rows[rows.length - 1]?.date;
-    meta = `${eur(loanMonthly(a.loan))}/mois${end ? " · fin " + end.slice(0, 4) : ""}`;
-    const crd = -v, rp = a.loan.amount ? (a.loan.amount - crd) / a.loan.amount * 100 : 0;
+    meta = `${eur(loanMonthly(a.loan))}/mois${end ? " · fin " + end.slice(0, 4) : ""}${shareTxt(a) ? " · ta part " + shareTxt(a) : ""}`;
+    const crd = -v / shareOf(a), rp = a.loan.amount ? (a.loan.amount - crd) / a.loan.amount * 100 : 0;
     delta = `<span class="pill up">${num(rp, 1)} % remb.</span>`;
   } else if (a.kind === "bien" && a.purchase && a.purchase.price) {
-    const cost = (+a.purchase.price || 0) + (+a.purchase.fees || 0), dv = v - cost;
-    meta = `${esc(a.category)} · acheté ${eurAuto(+a.purchase.price)}`;
+    const cost = (+a.purchase.price || 0) + (+a.purchase.fees || 0), dv = v / shareOf(a) - cost;
+    meta = `${esc(a.category)} · acheté ${eurAuto(+a.purchase.price)}${shareTxt(a) ? " · ta part " + shareTxt(a) : ""}`;
     delta = `<span class="pill ${cls(dv)}">${pct(dv / cost * 100)}</span>`;
   } else {
     const vs = [...a.vals].sort((x, y) => x.date < y.date ? -1 : 1);
@@ -987,23 +996,23 @@ function loanSections(a) {
   return [stats, body];
 }
 function immoSections(a, credits) {
-  const C = compute(), n = C.dates.length, p = a.purchase || {};
-  const value = C.per[a.id].val[n - 1];
-  const crd = credits.reduce((s, c) => s - C.per[c.id].val[n - 1], 0);
+  const C = compute(), n = C.dates.length, p = a.purchase || {}, f = shareOf(a), part = shareTxt(a);
+  const value = C.per[a.id].val[n - 1] / f;
+  const crd = credits.reduce((s, c) => s - C.per[c.id].val[n - 1], 0) / f;
   const cost = (+p.price || 0) + (+p.fees || 0);
   const pv = value - cost;
   const M = credits.reduce((s, c) => s + loanMonthly(c.loan), 0);
   const stats = `<section class="stats six">
-    <div class="stat"><div class="k">Valeur estimée</div><div class="v">${eur(value)}</div><div class="s flat">${a.growth ? (a.growth > 0 ? "+" : "") + num(+a.growth, 2) + " %/an après la dernière estimation" : "selon tes estimations"}</div></div>
+    <div class="stat"><div class="k">Valeur estimée${part ? " du bien" : ""}</div><div class="v">${eur(value)}</div><div class="s flat">${part ? "ta part " + part + " : " + eur(value * f) + " · " : ""}${a.growth ? (a.growth > 0 ? "+" : "") + num(+a.growth, 2) + " %/an après la dernière estimation" : "selon tes estimations"}</div></div>
     <div class="stat"><div class="k">Coût d'achat</div><div class="v">${cost ? eur(cost) : "—"}</div><div class="s flat">${p.price ? eur(+p.price) + (p.fees ? " + " + eur(+p.fees) + " de frais" : "") : "à renseigner dans Modifier"}</div></div>
     <div class="stat"><div class="k">Plus-value latente</div><div class="v ${cost ? cls(pv) : "flat"}">${cost ? signed(pv) : "—"}</div><div class="s ${cls(pv)}">${cost ? pct(pv / cost * 100) : ""}</div></div>
-    <div class="stat"><div class="k">Capital restant dû</div><div class="v">${credits.length ? eur(crd) : "—"}</div><div class="s flat">${credits.length ? credits.length + " crédit" + (credits.length > 1 ? "s" : "") : "pas de crédit lié"}</div></div>
-    <div class="stat"><div class="k">Ta part nette</div><div class="v ${cls(value - crd)}">${eur(value - crd)}</div><div class="s flat">valeur − crédits</div></div>
+    <div class="stat"><div class="k">Capital restant dû</div><div class="v">${credits.length ? eur(crd) : "—"}</div><div class="s flat">${credits.length ? (part ? "ta part : " + eur(crd * f) : credits.length + " crédit" + (credits.length > 1 ? "s" : "")) : "pas de crédit lié"}</div></div>
+    <div class="stat"><div class="k">Ta part nette${part ? " (" + part + ")" : ""}</div><div class="v ${cls(value - crd)}">${eur((value - crd) * f)}</div><div class="s flat">${part ? "ta part de (valeur − crédits)" : "valeur − crédits"}</div></div>
     <div class="stat"><div class="k">Mensualités ce mois-ci</div><div class="v">${credits.length ? eur(M) : "—"}</div><div class="s flat">${credits.length ? "assurance comprise" : ""}</div></div>
   </section>`;
   const loansHtml = `<section><div class="sec-head"><h2>Crédits</h2><button class="btn" type="button" id="add-loan">Ajouter un crédit</button></div>
     ${credits.length ? `<div class="list">${credits.map(c => {
-      const L = c.loan, rows = loanRows(L), end = rows.at(-1)?.date, cr = -C.per[c.id].val[n - 1];
+      const L = c.loan, rows = loanRows(L), end = rows.at(-1)?.date, cr = -C.per[c.id].val[n - 1] / f;
       return `<button type="button" class="row" data-open="${c.id}" style="grid-template-columns:minmax(0,1fr) auto">
         <div style="min-width:0"><div class="name">${esc(c.name)}</div><div class="meta" style="white-space:normal">${eur(+L.amount)} à ${num(+L.rate, 3)} % · ${eur(loanMonthly(L))}/mois${L.deferral ? " · différé " + L.deferral + " mois" : ""}${end ? " · fin " + end.slice(0, 4) : ""}</div></div>
         <div class="valbox"><div class="val">${eur(cr)}</div><div class="qty">restant dû</div></div></button>`;
@@ -1024,6 +1033,7 @@ function immoSections(a, credits) {
 function bindSim(a, credits) {
   const out = $("#sim-out"), P = $("#sim-price"), D = $("#sim-date"), F = $("#sim-agency");
   const line = (label, v, opts = {}) => `<tr${opts.total ? ' style="font-weight:700;border-top:2px solid var(--line)"' : ""}><td style="white-space:normal">${label}${opts.sub ? `<div class="hint" style="font-weight:400">${opts.sub}</div>` : ""}</td><td class="num ${opts.cls || ""}">${v}</td></tr>`;
+  const f = shareOf(a);
   const run = () => {
     const price = parseFloat(P.value) || 0, date = D.value || today(), ag = parseFloat(F.value) || 0;
     const s = saleSim(a, credits, price, date, ag);
@@ -1034,13 +1044,15 @@ function bindSim(a, credits) {
         ${ag ? line(`Frais d'agence (${num(ag, 2)} %)`, "− " + eur(s.agency)) : ""}
         ${credits.length ? line(`Capital restant dû au ${fmtDate(date)}`, "− " + eur(s.crd), { sub: (many ? s.per.map(x => esc(x.name) + " : " + eur(x.crd)).join(" · ") + ". " : "") + "Remboursé à la banque le jour de la vente." }) : ""}
         ${s.ira ? line("Indemnités de remboursement anticipé", "− " + eur(s.ira), { sub: "maximum légal : 6 mois d'intérêts, plafonné à 3 % du capital. Souvent négociable, parfois exclu dans ton contrat." }) : ""}
-        ${line("Ce qui te reste en poche", eur(s.net), { total: true, cls: cls(s.net) })}
+        ${line(f !== 1 ? "Ce qui reste après la vente" : "Ce qui te reste en poche", eur(s.net), { total: true, cls: cls(s.net) })}
+        ${f !== 1 ? line(`Ta part (${shareTxt(a)})`, eur(s.net * f), { total: true, cls: cls(s.net) }) : ""}
       </tbody></table></div>
       ${hasCost ? `<div class="tbl" style="margin-top:10px"><table><tbody>
-        ${line("Ton apport à l'achat", eur(s.apport), { sub: credits.length ? "prix + frais − montants empruntés" : "prix + frais" })}
+        ${line(f !== 1 ? "Apport à l'achat (à deux)" : "Ton apport à l'achat", eur(s.apport), { sub: credits.length ? "prix + frais − montants empruntés" : "prix + frais" })}
         ${credits.length ? line(`Mensualités payées d'ici là`, eur(s.paid.pay + s.paid.insurance), { sub: `dont ${eur(s.paid.principal)} de capital, ${eur(s.paid.interest)} d'intérêts${s.paid.insurance ? " et " + eur(s.paid.insurance) + " d'assurance" : ""}` }) : ""}
-        ${line("Total sorti de ta poche", eur(s.spent))}
-        ${line("Gain réel de l'opération", signed(s.gain), { total: true, cls: cls(s.gain), sub: "ce qui te reste − tout ce que tu as payé. Sans compter le loyer que tu aurais payé en location." })}
+        ${line(f !== 1 ? "Total payé (à deux)" : "Total sorti de ta poche", eur(s.spent))}
+        ${line(f !== 1 ? "Gain réel de l'opération (à deux)" : "Gain réel de l'opération", signed(s.gain), { total: true, cls: cls(s.gain), sub: "ce qui reste − tout ce qui a été payé. Sans compter le loyer que vous auriez payé en location." })}
+        ${f !== 1 ? line(`Ton gain réel (${shareTxt(a)})`, signed(s.gain * f), { total: true, cls: cls(s.gain), sub: "si l'apport et les mensualités sont partagés à parts égales" }) : ""}
       </tbody></table></div>` : `<p class="hint">Renseigne le prix d'achat dans « Modifier » pour voir ton gain réel.</p>`}
       <p class="hint" style="margin-top:8px">Plus-value brute : ${signed(s.plusValue)}. ${a.category === "Immobilier" ? "Sur une résidence principale, la plus-value est exonérée d'impôt." : ""}</p>`;
   };
@@ -1066,7 +1078,8 @@ function renderAsset() {
   const lastV = vals[vals.length - 1] ?? 0;
   let k0 = 0; while (k0 < vals.length && vals[k0] == null) k0++;
   const firstV = vals[k0] ?? 0;
-  const label = showPx ? "Cours en euros" : showEq ? "Ta part nette (valeur − crédits)" : a.kind === "dette" ? (a.loan ? "Capital restant dû" : "Reste à rembourser") : isQ ? "Valeur détenue" : "Valeur estimée";
+  const partLbl = shareTxt(a) ? " · ta part " + shareTxt(a) : "";
+  const label = (showPx ? "Cours en euros" : showEq ? "Ta part nette (valeur − crédits)" : a.kind === "dette" ? (a.loan ? "Capital restant dû" : "Reste à rembourser") : isQ ? "Valeur détenue" : "Valeur estimée") + (showPx ? "" : partLbl);
   const app = $("#app");
 
   let statsHtml = "", bodyHtml = "";
@@ -1298,13 +1311,14 @@ function openLoanDialog(bien) {
     };
   });
 }
-function purchaseFieldsHtml(p = {}, growth) {
+function purchaseFieldsHtml(p = {}, growth, share) {
   return `<div class="fields">
     <label class="f">Date d'achat<input type="date" id="pu-date" max="${today()}" value="${p.date || ""}" required></label>
     <label class="f">Prix d'achat (€)<input type="number" id="pu-price" step="any" min="0" inputmode="decimal" value="${p.price ?? ""}" required></label>
     <label class="f">Frais d'achat (€)<input type="number" id="pu-fees" step="any" min="0" inputmode="decimal" value="${p.fees ?? ""}" placeholder="notaire, agence, garantie"></label>
     <label class="f">Évolution du marché (% par an)<input type="number" id="pu-growth" step="any" inputmode="decimal" value="${growth ?? ""}" placeholder="ex. 1 (facultatif)"></label>
-  </div>`;
+    <label class="f">Ta part de propriété (%)<input type="number" id="pu-share" step="any" min="1" max="100" inputmode="decimal" value="${share ?? 100}"></label>
+  </div><span class="hint">Acheté à deux à parts égales : 50. Ton patrimoine comptera ta part du bien et des crédits.</span>`;
 }
 
 function openAdd(kind = "cote") {
@@ -1460,6 +1474,7 @@ function openAddImmo() {
       const bien = { id: uid(), kind: "bien", name, category: "Immobilier", interp: true, purchase: { date, price, fees }, txs: [],
         vals: [{ id: uid(), date, value: price }] };
       if (!isNaN(growth)) bien.growth = growth;
+      const sh = parseFloat($("#pu-share", d).value); if (sh > 0 && sh < 100) bien.share = sh;
       if (est > 0 && today() > date) bien.vals.push({ id: uid(), date: today(), value: est });
       S.assets.push(bien);
       const mk = (L, pfx) => ({ id: uid(), kind: "dette", name: $(`#${pfx}-name`, d).value.trim() || "Crédit", category: "Crédit immobilier", linkedTo: bien.id, loan: { ...L, from: date }, txs: [], vals: [] });
@@ -1485,7 +1500,7 @@ function openEdit(a) {
           <label class="f">Catégorie<select id="e-cat">${CATS[a.kind].map(c => `<option ${c === a.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
         </div>
         ${!isQ && !isLoan ? `<label class="check"><input type="checkbox" id="e-interp" ${a.interp ? "checked" : ""}> Évolution progressive entre deux estimations</label>` : ""}
-        ${isImmoBien ? `<hr class="divider"><div class="setting"><h3>Achat</h3></div>${purchaseFieldsHtml(a.purchase || {}, a.growth)}` : ""}
+        ${isImmoBien ? `<hr class="divider"><div class="setting"><h3>Achat</h3></div>${purchaseFieldsHtml(a.purchase || {}, a.growth, a.share)}` : ""}
         ${isLoan ? `<hr class="divider"><div class="setting"><h3>Crédit</h3></div>${loanFieldsHtml(a.loan)}` : ""}
         <span class="hint err" id="e-hint"></span>
         <div class="form-actions">
@@ -1521,6 +1536,7 @@ function openEdit(a) {
           a.purchase = { date, price, fees };
         }
         if (isNaN(g)) delete a.growth; else a.growth = g;
+        const sh = parseFloat($("#pu-share", d).value); if (sh > 0 && sh < 100) a.share = sh; else delete a.share;
       }
       save(); dlg.close(); render(); refreshPrices();
     };
