@@ -106,7 +106,7 @@ main.wrap { padding-block: 22px 60px; display: flex; flex-direction: column; gap
 .head { flex: 1 1 260px; min-width: 0; text-align: left; background: none; border: 1px solid transparent; border-radius: 14px; padding: 8px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 4px; color: inherit; }
 .head:hover { background: var(--sunken); }
 .head.on { border-color: var(--line); background: var(--surface); box-shadow: var(--shadow); }
-.big.mid { font-size: clamp(26px, 5vw, 34px); }
+.head:not(.on) .big { font-size: clamp(26px, 5vw, 34px); }
 .chg { font-weight: 600; font-size: 15px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .chg .when { color: var(--muted); font-weight: 500; }
 .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--muted); }
@@ -330,7 +330,7 @@ const KIND_LABEL = { cote: "Placements cotés", bien: "Biens et liquidités", de
 
 /* ================= État & stockage ================= */
 const KEY = "patrimoine.v1", PKEY = "patrimoine.prix.v1";
-const APP_VERSION = "31 oct. 2026 · 22 h 45";
+const APP_VERSION = "2 nov. 2026 · 9 h 30";
 const DEFAULT_WORKER = "https://prix.clemss222.workers.dev";
 let S = null, P = {};
 const TKEY = "patrimoine.motdepasse";
@@ -953,7 +953,8 @@ function renderHome() {
     const dv = v1 - start - f, base = start + Math.max(0, f), k = cls(dv);
     return `<span class="${k}">${signed(dv)}</span>${base > 0 ? `<span class="pill ${k}">${pct(dv / base * 100)}</span>` : ""}<span class="when">${esc(when)}</span>`;
   };
-  const showPl = UI.homeChart === "pl" && quoted.length;
+  // par défaut, le graphique montre les placements (s'il y en a)
+  const showPl = (UI.homeChart || "pl") === "pl" && quoted.length > 0;
   const vals = showPl ? plVals : netVals;
   const last = C.total[C.total.length - 1];
   const totAssets = C.assets[C.assets.length - 1], totDebts = C.debts[C.debts.length - 1];
@@ -986,16 +987,16 @@ function renderHome() {
   app.innerHTML = `
   <section class="hero">
     <div class="heads">
+      ${quoted.length ? `<button type="button" class="head ${showPl ? "on" : ""}" data-chart="pl">
+        <div class="eyebrow">Placements</div>
+        <div class="big" id="big2">${eur(plLast)}</div>
+        <div class="chg" id="chg2">${plChange(plVals[0], plLast, dates[0], dates[dates.length - 1], RANGE_WHEN[UI.range] + " · hors versements")}</div>
+      </button>` : ""}
       <button type="button" class="head ${showPl ? "" : "on"}" data-chart="net">
         <div class="eyebrow">Patrimoine net</div>
         <div class="big" id="big">${eur(last)}</div>
         <div class="chg" id="chg">${changeLine(netVals[0], last, RANGE_WHEN[UI.range])}</div>
       </button>
-      ${quoted.length ? `<button type="button" class="head ${showPl ? "on" : ""}" data-chart="pl">
-        <div class="eyebrow">Placements</div>
-        <div class="big mid" id="big2">${eur(plLast)}</div>
-        <div class="chg" id="chg2">${plChange(plVals[0], plLast, dates[0], dates[dates.length - 1], RANGE_WHEN[UI.range] + " · hors versements")}</div>
-      </button>` : ""}
     </div>
     ${rangeButtons()}
     <div class="chart" id="chart"></div>
